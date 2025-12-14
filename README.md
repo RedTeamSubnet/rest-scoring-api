@@ -19,7 +19,7 @@ The Scoring API is a specialized validator node that provides centralized scorin
 
 ### State Management
 
-The rewarding server maintains several important state variables:
+The scoring API server maintains several important state variables:
 
 - `validators_miner_commits`: Stores current miner commits from all validators, indexed by validator UID and hotkey
 - `miner_commits`: Aggregated miner commits from all validators, indexed by miner UID and hotkey
@@ -123,7 +123,7 @@ python -u -m src.api \
 Validators can use the centralized scoring service by:
 
 1. Adding the `--validator.use_centralized_scoring` flag to their validator command
-2. The validator will automatically fetch scoring results from the rewarding server
+2. The validator will automatically fetch scoring results from the scoring API server
 3. This eliminates the need for each validator to run scoring infrastructure
 
 ## Development & Troubleshooting

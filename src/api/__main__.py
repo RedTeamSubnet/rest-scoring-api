@@ -125,7 +125,7 @@ class ScoringApi(BaseValidator):
         self._sync_scoring_results_from_storage_to_cache()
 
         bt.logging.info(
-            f"Reward app constant values: {constants.model_dump_json(indent=2)}"
+            f"Scoring API constant values: {constants.model_dump_json(indent=2)}"
         )
 
     def setup_bittensor_objects(self):
@@ -141,14 +141,14 @@ class ScoringApi(BaseValidator):
 
         if SCORING_API_HOTKEY != self.wallet.hotkey.ss58_address:
             bt.logging.error(
-                f"Reward app hotkey {SCORING_API_HOTKEY} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
+                f"Scoring API hotkey {SCORING_API_HOTKEY} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
             )
             exit()
         else:
             self.hotkey = SCORING_API_HOTKEY
             self.uid = SCORING_API_UID
             bt.logging.success(
-                f"Reward app initialized with hotkey: {self.hotkey}, uid: {self.uid}"
+                f"Scoring API initialized with hotkey: {self.hotkey}, uid: {self.uid}"
             )
 
     # MARK: Initialization and Setup
