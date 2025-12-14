@@ -19,11 +19,18 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR "/usr/src/${RT_SCORING_API_SLUG}"
 
 RUN --mount=type=cache,target=/root/.cache,sharing=locked \
-	--mount=type=bind,source=./requirements.txt,target=requirements.txt \
 	_BUILD_TARGET_ARCH=$(uname -m) && \
 	echo "BUILDING TARGET ARCHITECTURE: ${_BUILD_TARGET_ARCH}" && \
-	python -m pip install --timeout 60 -U pip uv && \
-	python -m uv pip install --prefix=/install -r ./requirements.txt
+	rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
+	apt-get clean -y && \
+	apt-get update --fix-missing -o Acquire::CompressionTypes::Order::=gz && \
+	apt-get install -y --no-install-recommends \
+		git && \
+	python -m pip install --timeout 60 -U pip
+
+RUN	--mount=type=cache,target=/root/.cache,sharing=locked \
+	--mount=type=bind,source=./requirements.txt,target=requirements.txt \
+	python -m pip install --prefix=/install -r ./requirements.txt
 
 
 ## Here is the base image:
@@ -38,7 +45,7 @@ ARG RT_SCORING_API_CONFIGS_DIR="/etc/${RT_SCORING_API_SLUG}"
 ARG RT_SCORING_API_DATA_DIR="/var/lib/${RT_SCORING_API_SLUG}"
 ARG RT_SCORING_API_LOGS_DIR="/var/log/${RT_SCORING_API_SLUG}"
 ARG RT_SCORING_API_TMP_DIR="/tmp/${RT_SCORING_API_SLUG}"
-ARG RT_SCORING_API_PORT=8000
+ARG RT_SCORING_API_PORT=47920
 ## IMPORTANT!: Get hashed password from build-arg!
 ## echo "RT_SCORING_API_PASSWORD123" | openssl passwd -6 -stdin
 ARG HASH_PASSWORD="\$6\$i31iAbid3nrpBYVQ\$p2aOWyMbVQ7QaFCGyBlbj6fKPEbgKO5/L2nxn8TElACmUZmDgP9PxsD3ZdtY31.ccHVTQLbcDo86aZPvSq5VH0"
@@ -79,6 +86,7 @@ RUN --mount=type=secret,id=HASH_PASSWORD \
 		iputils-ping \
 		iproute2 \
 		curl \
+		git \
 		nano && \
 	curl -fsSL https://get.docker.com/ | sh && \
 	apt-get clean -y && \
@@ -104,10 +112,23 @@ RUN --mount=type=secret,id=HASH_PASSWORD \
 	echo "alias ls='ls -aF --group-directories-first --color=auto'" >> "/home/${USER}/.bashrc" && \
 	echo -e "alias ll='ls -alhF --group-directories-first --color=auto'\n" >> "/home/${USER}/.bashrc" && \
 	rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /root/.cache/* "/home/${USER}/.cache/*" && \
-	mkdir -pv "${RT_SCORING_API_DIR}" "${RT_SCORING_API_DATA_DIR}" "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" && \
-	chown -Rc "${USER}:${GROUP}" "${RT_HOME_DIR}" "${RT_SCORING_API_DATA_DIR}" "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" && \
-	find "${RT_SCORING_API_DIR}" "${RT_SCORING_API_DATA_DIR}" -type d -exec chmod -c 770 {} + && \
-	find "${RT_SCORING_API_DIR}" "${RT_SCORING_API_DATA_DIR}" -type d -exec chmod -c ug+s {} + && \
+	mkdir -pv "${RT_SCORING_API_DIR}" \
+		"${RT_SCORING_API_CONFIGS_DIR}" \
+		"${RT_SCORING_API_DATA_DIR}" \
+		"${RT_SCORING_API_LOGS_DIR}" \
+		"${RT_SCORING_API_TMP_DIR}" && \
+	chown -Rc "${USER}:${GROUP}" \
+		"${RT_HOME_DIR}" \
+		"${RT_SCORING_API_CONFIGS_DIR}" \
+		"${RT_SCORING_API_DATA_DIR}" \
+		"${RT_SCORING_API_LOGS_DIR}" \
+		"${RT_SCORING_API_TMP_DIR}" && \
+	find "${RT_SCORING_API_DIR}" \
+		"${RT_SCORING_API_CONFIGS_DIR}" \
+		"${RT_SCORING_API_DATA_DIR}" -type d -exec chmod -c 770 {} + && \
+	find "${RT_SCORING_API_DIR}" \
+		"${RT_SCORING_API_CONFIGS_DIR}" \
+		"${RT_SCORING_API_DATA_DIR}" -type d -exec chmod -c ug+s {} + && \
 	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type d -exec chmod -c 775 {} + && \
 	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type d -exec chmod -c +s {} +
 

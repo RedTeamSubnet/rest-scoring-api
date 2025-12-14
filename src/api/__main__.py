@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import os
 import time
 import argparse
@@ -31,21 +29,21 @@ from .router import start_ping_server
 
 
 ENV_PREFIX = "RT_"
-ENV_PREFIX_REWARD_APP = f"{ENV_PREFIX}REWARD_APP_"
+ENV_PREFIX_SCORING_API = f"{ENV_PREFIX}SCORING_API_"
 
-REWARD_APP_HOTKEY = os.getenv(f"{ENV_PREFIX_REWARD_APP}HOTKEY")
-REWARD_APP_UID = int(os.getenv(f"{ENV_PREFIX_REWARD_APP}UID"))
+SCORING_API_HOTKEY = os.getenv(f"{ENV_PREFIX_SCORING_API}HOTKEY")
+SCORING_API_UID = int(os.getenv(f"{ENV_PREFIX_SCORING_API}UID"))
 
 
-def get_reward_app_config() -> bt.Config:
+def get_scoring_api_config() -> bt.Config:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--reward_app.epoch_length", type=int, default=60)
-    parser.add_argument("--reward_app.port", type=int, default=9000)
+    parser.add_argument("--scoring_api.epoch_length", type=int, default=60)
+    parser.add_argument("--scoring_api.port", type=int, default=9000)
     config = get_config(parser)
     return config
 
 
-class RewardApp(BaseValidator):
+class ScoringApi(BaseValidator):
     """
     A centralized scoring service for the RedTeam network.
 
@@ -55,7 +53,7 @@ class RewardApp(BaseValidator):
     3. Storing and caching scoring results
     4. Publishing scoring results for validator consumption
 
-    Unlike Validator, RewardApp:
+    Unlike Validator, ScoringApi:
     - Does NOT query miners directly
     - Does NOT set weights on-chain
     - Only performs centralized scoring and comparison
@@ -64,7 +62,7 @@ class RewardApp(BaseValidator):
 
     def __init__(self, config: bt.Config):
         """
-        Initialize the reward app as a centralized scoring service.
+        Initialize the scoring API as a centralized scoring service.
 
         Args:
             config (bt.Config): Bittensor configuration object
@@ -81,9 +79,9 @@ class RewardApp(BaseValidator):
         super().__init__(config)
 
         # Override hotkey and uid from environment if provided
-        if REWARD_APP_HOTKEY and REWARD_APP_UID is not None:
-            self.hotkey = REWARD_APP_HOTKEY
-            self.uid = REWARD_APP_UID
+        if SCORING_API_HOTKEY and SCORING_API_UID is not None:
+            self.hotkey = SCORING_API_HOTKEY
+            self.uid = SCORING_API_UID
 
         # Setup scoring-specific components
         self.validator_request_header_fn = create_validator_request_header_fn(
@@ -111,7 +109,7 @@ class RewardApp(BaseValidator):
         self.active_challenges: dict = {}
         self._init_active_challenges()
 
-        # Initialize reward app state
+        # Initialize scoring API state
         self.validators_miner_commits: dict[
             tuple[int, str], dict[tuple[int, str], dict[str, MinerChallengeCommit]]
         ] = {}
@@ -141,14 +139,14 @@ class RewardApp(BaseValidator):
         self.metagraph = self.subtensor.metagraph(self.config.netuid)
         bt.logging.info(f"Metagraph: {self.metagraph}")
 
-        if REWARD_APP_HOTKEY != self.wallet.hotkey.ss58_address:
+        if SCORING_API_HOTKEY != self.wallet.hotkey.ss58_address:
             bt.logging.error(
-                f"Reward app hotkey {REWARD_APP_HOTKEY} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
+                f"Reward app hotkey {SCORING_API_HOTKEY} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
             )
             exit()
         else:
-            self.hotkey = REWARD_APP_HOTKEY
-            self.uid = REWARD_APP_UID
+            self.hotkey = SCORING_API_HOTKEY
+            self.uid = SCORING_API_UID
             bt.logging.success(
                 f"Reward app initialized with hotkey: {self.hotkey}, uid: {self.uid}"
             )
@@ -245,7 +243,7 @@ class RewardApp(BaseValidator):
 
     def export_state(self, public_view: bool = False) -> dict:
         """
-        Export the reward app state for storage and sharing.
+        Export the scoring API state for storage and sharing.
 
         Args:
             public_view (bool): If True, returns state suitable for public viewing
@@ -361,7 +359,7 @@ class RewardApp(BaseValidator):
                 )
                 self._store_centralized_scoring(challenge_name=challenge)
 
-        # Store reward app state, this can be viewed by other validators, so we need to make it public view
+        # Store scoring API state, this can be viewed by other validators, so we need to make it public view
         self.storage_manager.update_validator_state(
             data=self.export_state(public_view=True), async_update=True
         )
@@ -503,7 +501,7 @@ class RewardApp(BaseValidator):
         self.challenge_managers[challenge].update_miner_scores(controller.miner_commits)
 
     def run(self):
-        bt.logging.info("Starting reward app loop.")
+        bt.logging.info("Starting scoring API loop.")
         # Try set weights after initial sync
 
         while True:
@@ -948,13 +946,13 @@ class RewardApp(BaseValidator):
 
 if __name__ == "__main__":
     # Initialize and run app
-    config = get_reward_app_config()
+    config = get_scoring_api_config()
 
     server_thread = threading.Thread(
-        target=start_ping_server, args=(config.reward_app.port,), daemon=True
+        target=start_ping_server, args=(config.scoring_api.port,), daemon=True
     )
     server_thread.start()
-    with RewardApp(config) as app:
+    with ScoringApi(config) as app:
         while True:
-            bt.logging.info("RewardApp is running...")
+            bt.logging.info("ScoringApi is running...")
             time.sleep(constants.EPOCH_LENGTH // 4)

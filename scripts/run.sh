@@ -23,15 +23,15 @@ fi
 main()
 {
 	echo "[INFO]: Starting Scoring API..."
-	python -u ./src/api/app.py \
+	python -u -m src.api \
 		--wallet.name "${RT_SCORING_API_WALLET_NAME:-scoring-api}" \
 		--wallet.path "${RT_BTCLI_WALLET_DIR:-${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}/wallets}" \
 		--wallet.hotkey "default" \
 		--subtensor.network "${RT_BT_SUBTENSOR_NETWORK:-${RT_BT_SUBTENSOR_WS_SCHEME:-ws}://${RT_BT_SUBTENSOR_HOST:-subtensor}:${RT_BT_SUBTENSOR_WS_PORT:-9944}}" \
 		--network "${RT_SUBTENSOR_NETWORK:-test}" \
 		--netuid "${RT_BT_SUBNET_NETUID:-2}" \
-		--reward_app.port "${RT_SCORING_API_PORT:-47920}" \
-		--reward_app.epoch_length "${RT_SCORING_API_EPOCH_LENGTH:-60}" \
+		--scoring_api.port "${RT_SCORING_API_PORT:-47920}" \
+		--scoring_api.epoch_length "${RT_SCORING_API_EPOCH_LENGTH:-60}" \
 		--validator.cache_dir "${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}/.cache" \
 		--validator.hf_repo_id "${RT_SCORING_API_HF_REPO:-redteamsubnet61/rest-scoring-api}" || exit 2
 
