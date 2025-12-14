@@ -38,7 +38,7 @@ SCORING_API_UID = int(os.getenv(f"{ENV_PREFIX_SCORING_API}UID"))
 def get_scoring_api_config() -> bt.Config:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scoring_api.epoch_length", type=int, default=60)
-    parser.add_argument("--scoring_api.port", type=int, default=9000)
+    parser.add_argument("--scoring_api.port", type=int, default=47920)
     config = get_config(parser)
     return config
 

@@ -54,12 +54,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
+          # platforms: linux/amd64,linux/arm64
           # build-args: |
           #   "HASH_PASSWORD=${{ secrets.DOCKER_UID_HASH_PASSWORD }}"
           secrets: |
             "HASH_PASSWORD=${{ secrets.DOCKER_UID_HASH_PASSWORD }}"
-          platforms: linux/amd64
-          # platforms: linux/amd64,linux/arm64
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/rest-scoring-api:cache-latest
           cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/rest-scoring-api:cache-latest,mode=max
           tags: |
