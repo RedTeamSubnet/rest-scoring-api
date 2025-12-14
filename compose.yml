@@ -1,0 +1,23 @@
+services:
+  api:
+    image: redteamsubnet61/rest-scoring-api:latest
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      TERM: ${TERM:-xterm}
+      TZ: ${TZ:-UTC}
+      RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-8000}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - "api-logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"
+      - "api-data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
+    ports:
+      - "${RT_SCORING_API_PORT:-8000}:${RT_SCORING_API_PORT:-8000}"
+    tty: true
+
+volumes:
+  api-logs:
+  api-data:

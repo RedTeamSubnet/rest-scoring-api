@@ -1,4 +1,4 @@
-# RedTeam Subnet Rewarding Server
+# RedTeam subnet - Scoring REST API
 
 ## Overview
 

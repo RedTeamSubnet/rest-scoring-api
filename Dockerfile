@@ -1,88 +1,71 @@
 # syntax=docker/dockerfile:1
-# check=skip=SecretsUsedInArgOrEnv,UndefinedVar
+# check=skip=SecretsUsedInArgOrEnv
 
 ARG PYTHON_VERSION=3.10
-ARG BASE_IMAGE=python:${PYTHON_VERSION}-slim-bookworm
+ARG BASE_IMAGE=python:${PYTHON_VERSION}-slim-trixie
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG RT_REWARD_APP_SLUG="server.reward-app"
+ARG RT_SCORING_API_SLUG="rest-scoring-api"
 
 
 ## Here is the builder image:
 FROM ${BASE_IMAGE} AS builder
 
 ARG DEBIAN_FRONTEND
-ARG RT_REWARD_APP_SLUG
-
-ENV CARGO_HOME=/usr/local/rust/cargo \
-	RUSTUP_HOME=/usr/local/rust/rustup
-ENV PATH="${CARGO_HOME}/bin:${PATH}"
+ARG RT_SCORING_API_SLUG
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-WORKDIR "/usr/src/${RT_REWARD_APP_SLUG}"
+WORKDIR "/usr/src/${RT_SCORING_API_SLUG}"
 
 RUN --mount=type=cache,target=/root/.cache,sharing=locked \
+	--mount=type=bind,source=./requirements.txt,target=requirements.txt \
 	_BUILD_TARGET_ARCH=$(uname -m) && \
 	echo "BUILDING TARGET ARCHITECTURE: ${_BUILD_TARGET_ARCH}" && \
-	rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
-	apt-get clean -y && \
-	# echo "Acquire::http::Pipeline-Depth 0;" >> /etc/apt/apt.conf.d/99fixbadproxy && \
-	# echo "Acquire::http::No-Cache true;" >> /etc/apt/apt.conf.d/99fixbadproxy && \
-	# echo "Acquire::BrokenProxy true;" >> /etc/apt/apt.conf.d/99fixbadproxy && \
-	apt-get update --fix-missing -o Acquire::CompressionTypes::Order::=gz && \
-	apt-get install -y --no-install-recommends \
-		curl \
-		pkg-config \
-		libssl-dev \
-		build-essential && \
-	curl https://sh.rustup.rs -sSf | sh -s -- -y  && \
-	python3 -m pip install --timeout 60 -U pip uv
-
-# COPY ./requirements* ./
-RUN	--mount=type=cache,target=/root/.cache,sharing=locked \
-	--mount=type=bind,source=./requirements.txt,target=requirements.txt \
-	--mount=type=bind,source=./services/rewarding/requirements.txt,target=./requirements.extra.txt \
-	python3 -m uv pip install --prefix=/install -r ./requirements.txt && \
-	python3 -m uv pip install --prefix=/install -r ./requirements.extra.txt
+	python -m pip install --timeout 60 -U pip uv && \
+	python -m uv pip install --prefix=/install -r ./requirements.txt
 
 
 ## Here is the base image:
 FROM ${BASE_IMAGE} AS base
 
 ARG DEBIAN_FRONTEND
-ARG RT_REWARD_APP_SLUG
+ARG RT_SCORING_API_SLUG
 
 ARG RT_HOME_DIR="/app"
-ARG RT_REWARD_APP_DIR="${RT_HOME_DIR}/${RT_REWARD_APP_SLUG}"
-ARG RT_REWARD_APP_DATA_DIR="/var/lib/${RT_REWARD_APP_SLUG}"
-ARG RT_REWARD_APP_LOGS_DIR="/var/log/${RT_REWARD_APP_SLUG}"
-ARG RT_REWARD_APP_TMP_DIR="/tmp/${RT_REWARD_APP_SLUG}"
+ARG RT_SCORING_API_DIR="${RT_HOME_DIR}/${RT_SCORING_API_SLUG}"
+ARG RT_SCORING_API_CONFIGS_DIR="/etc/${RT_SCORING_API_SLUG}"
+ARG RT_SCORING_API_DATA_DIR="/var/lib/${RT_SCORING_API_SLUG}"
+ARG RT_SCORING_API_LOGS_DIR="/var/log/${RT_SCORING_API_SLUG}"
+ARG RT_SCORING_API_TMP_DIR="/tmp/${RT_SCORING_API_SLUG}"
+ARG RT_SCORING_API_PORT=8000
 ## IMPORTANT!: Get hashed password from build-arg!
-## echo "RT_REWARD_APP_PASSWORD123" | openssl passwd -5 -stdin
-ARG HASH_PASSWORD="\$5\$92XQZEJ59Vs3llsd\$hca8huh.9PoEkMoWFYqGnxAK2maRdavuuDZktskVFc9"
+## echo "RT_SCORING_API_PASSWORD123" | openssl passwd -6 -stdin
+ARG HASH_PASSWORD="\$6\$i31iAbid3nrpBYVQ\$p2aOWyMbVQ7QaFCGyBlbj6fKPEbgKO5/L2nxn8TElACmUZmDgP9PxsD3ZdtY31.ccHVTQLbcDo86aZPvSq5VH0"
 ARG UID=1000
 ARG GID=11000
 ARG USER=rt-user
 ARG GROUP=rt-group
 
-ENV RT_REWARD_APP_SLUG="${RT_REWARD_APP_SLUG}" \
+ENV RT_SCORING_API_SLUG="${RT_SCORING_API_SLUG}" \
 	RT_HOME_DIR="${RT_HOME_DIR}" \
-	RT_REWARD_APP_DIR="${RT_REWARD_APP_DIR}" \
-	RT_REWARD_APP_DATA_DIR="${RT_REWARD_APP_DATA_DIR}" \
-	RT_REWARD_APP_LOGS_DIR="${RT_REWARD_APP_LOGS_DIR}" \
-	RT_REWARD_APP_TMP_DIR="${RT_REWARD_APP_TMP_DIR}" \
+	RT_SCORING_API_DIR="${RT_SCORING_API_DIR}" \
+	RT_SCORING_API_CONFIGS_DIR="${RT_SCORING_API_CONFIGS_DIR}" \
+	RT_SCORING_API_DATA_DIR="${RT_SCORING_API_DATA_DIR}" \
+	RT_SCORING_API_LOGS_DIR="${RT_SCORING_API_LOGS_DIR}" \
+	RT_SCORING_API_TMP_DIR="${RT_SCORING_API_TMP_DIR}" \
+	RT_SCORING_API_PORT=${RT_SCORING_API_PORT} \
 	UID=${UID} \
 	GID=${GID} \
 	USER=${USER} \
 	GROUP=${GROUP} \
 	PYTHONIOENCODING=utf-8 \
-	PYTHONUNBUFFERED=1 \
-	PYTHONPATH="${RT_REWARD_APP_DIR}:${PYTHONPATH}"
+	PYTHONUNBUFFERED=1
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /root/.cache/* && \
+RUN --mount=type=secret,id=HASH_PASSWORD \
+	rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /root/.cache/* && \
 	apt-get clean -y && \
 	# echo "Acquire::http::Pipeline-Depth 0;" >> /etc/apt/apt.conf.d/99fixbadproxy && \
 	# echo "Acquire::http::No-Cache true;" >> /etc/apt/apt.conf.d/99fixbadproxy && \
@@ -110,19 +93,23 @@ RUN rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /root/.cache/*
 	usermod -aG docker ${USER} && \
 	echo "${USER} ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/${USER}" && \
 	chmod 0440 "/etc/sudoers.d/${USER}" && \
-	echo -e "${USER}:${HASH_PASSWORD}" | chpasswd -e && \
+	if [ -f "/run/secrets/HASH_PASSWORD" ]; then \
+		echo -e "${USER}:$(cat /run/secrets/HASH_PASSWORD)" | chpasswd -e; \
+	else \
+		echo -e "${USER}:${HASH_PASSWORD}" | chpasswd -e; \
+	fi && \
 	echo -e "\nalias ls='ls -aF --group-directories-first --color=auto'" >> /root/.bashrc && \
 	echo -e "alias ll='ls -alhF --group-directories-first --color=auto'\n" >> /root/.bashrc && \
 	echo -e "\numask 0002" >> "/home/${USER}/.bashrc" && \
 	echo "alias ls='ls -aF --group-directories-first --color=auto'" >> "/home/${USER}/.bashrc" && \
 	echo -e "alias ll='ls -alhF --group-directories-first --color=auto'\n" >> "/home/${USER}/.bashrc" && \
 	rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /root/.cache/* "/home/${USER}/.cache/*" && \
-	mkdir -pv "${RT_REWARD_APP_DIR}" "${RT_REWARD_APP_DATA_DIR}" "${RT_REWARD_APP_LOGS_DIR}" "${RT_REWARD_APP_TMP_DIR}" && \
-	chown -Rc "${USER}:${GROUP}" "${RT_HOME_DIR}" "${RT_REWARD_APP_DATA_DIR}" "${RT_REWARD_APP_LOGS_DIR}" "${RT_REWARD_APP_TMP_DIR}" && \
-	find "${RT_REWARD_APP_DIR}" "${RT_REWARD_APP_DATA_DIR}" -type d -exec chmod -c 770 {} + && \
-	find "${RT_REWARD_APP_DIR}" "${RT_REWARD_APP_DATA_DIR}" -type d -exec chmod -c ug+s {} + && \
-	find "${RT_REWARD_APP_LOGS_DIR}" "${RT_REWARD_APP_TMP_DIR}" -type d -exec chmod -c 775 {} + && \
-	find "${RT_REWARD_APP_LOGS_DIR}" "${RT_REWARD_APP_TMP_DIR}" -type d -exec chmod -c +s {} +
+	mkdir -pv "${RT_SCORING_API_DIR}" "${RT_SCORING_API_DATA_DIR}" "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" && \
+	chown -Rc "${USER}:${GROUP}" "${RT_HOME_DIR}" "${RT_SCORING_API_DATA_DIR}" "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" && \
+	find "${RT_SCORING_API_DIR}" "${RT_SCORING_API_DATA_DIR}" -type d -exec chmod -c 770 {} + && \
+	find "${RT_SCORING_API_DIR}" "${RT_SCORING_API_DATA_DIR}" -type d -exec chmod -c ug+s {} + && \
+	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type d -exec chmod -c 775 {} + && \
+	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type d -exec chmod -c +s {} +
 
 ENV LANG=en_US.UTF-8 \
 	LANGUAGE=en_US.UTF-8 \
@@ -134,14 +121,15 @@ COPY --from=builder /install /usr/local
 ## Here is the final image:
 FROM base AS app
 
-WORKDIR "${RT_REWARD_APP_DIR}"
-COPY --chown=${UID}:${GID} ./redteam_core ${RT_REWARD_APP_DIR}/redteam_core
-COPY --chown=${UID}:${GID} ./neurons/validator ${RT_REWARD_APP_DIR}/neurons/validator
-COPY --chown=${UID}:${GID} ./services/rewarding ${RT_REWARD_APP_DIR}/services/rewarding
-COPY --chown=${UID}:${GID} --chmod=770 ./services/rewarding/scripts/docker/*.sh /usr/local/bin/
+WORKDIR "${RT_SCORING_API_DIR}"
+COPY --chown=${UID}:${GID} ./src ${RT_SCORING_API_DIR}
+COPY --chown=${UID}:${GID} --chmod=770 ./scripts/docker/*.sh /usr/local/bin/
 
-# VOLUME ["${RT_REWARD_APP_DATA_DIR}"]
+# VOLUME ["${RT_SCORING_API_DATA_DIR}"]
+# EXPOSE ${RT_SCORING_API_PORT}
 
 USER ${UID}:${GID}
+# HEALTHCHECK --start-period=30s --start-interval=1s --interval=5m --timeout=5s --retries=3 \
+# 	CMD curl -f http://localhost:${RT_SCORING_API_PORT}/api/v${RT_SCORING_API_VERSION:-1}/ping || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]

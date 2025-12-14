@@ -1,0 +1,24 @@
+services:
+  api:
+    image: redteamsubnet61/rest-scoring-api:2.0.0-251202
+    # volumes:
+    #   - "./volumes/configs/rest-scoring-api:${RT_SCORING_API_CONFIGS_DIR:-/etc/rest-scoring-api}"
+    #   - "api-vscode-server:/home/rt-user/.vscode-server"
+    # deploy:
+    #   replicas: 0
+    #   resources:
+    #     limits:
+    #       cpus: "2"
+    #       memory: 4GB
+    # command: ["/bin/bash"]
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:${RT_SCORING_API_PORT:-8000}/api/v${RT_SCORING_API_VERSION:-1}/ping"]
+    #   start_period: 30s
+    #   start_interval: 1s
+    #   interval: 5m
+    #   timeout: 5s
+    #   retries: 3
+
+
+# volumes:
+#   api-vscode-server:

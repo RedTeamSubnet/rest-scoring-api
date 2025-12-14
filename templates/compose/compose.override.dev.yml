@@ -1,0 +1,23 @@
+services:
+  api:
+    volumes:
+      - "./volumes/configs/rest-scoring-api:${RT_SCORING_API_CONFIGS_DIR:-/etc/rest-scoring-api}"
+      - "./volumes/storage/rest-scoring-api/logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"
+      - "./volumes/storage/rest-scoring-api/data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
+      - "./scripts/docker/docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh"
+      - "./src:/app/rest-scoring-api"
+      - "./volumes/.vscode-server:/home/rt-user/.vscode-server"
+    # deploy:
+    #   replicas: 0
+    #   resources:
+    #     limits:
+    #       cpus: "2"
+    #       memory: 4GB
+    # command: ["/bin/bash"]
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:${RT_SCORING_API_PORT:-8000}/api/v${RT_SCORING_API_VERSION:-1}/ping"]
+    #   start_period: 30s
+    #   start_interval: 1s
+    #   interval: 5m
+    #   timeout: 5s
+    #   retries: 3

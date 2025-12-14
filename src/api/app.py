@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import os
 import time
@@ -28,7 +27,7 @@ from redteam_core.validator.models import (
 from redteam_core.validator.utils import create_validator_request_header_fn
 
 from .cache import ScoringLRUCache
-from services.rewarding.router import start_ping_server
+from .router import start_ping_server
 
 
 ENV_PREFIX = "RT_"
