@@ -19,6 +19,11 @@ fi
 ## --- Base --- ##
 
 
+## --- Variables --- ##
+RT_SCORING_API_UID=${RT_SCORING_API_UID:--1}
+## --- Variables --- ##
+
+
 ## --- Main --- ##
 main()
 {
