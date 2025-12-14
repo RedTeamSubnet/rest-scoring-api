@@ -41,6 +41,7 @@ IMG_PLATFORM=${IMG_PLATFORM:-$(uname -m)}
 DOCKERFILE_PATH=${DOCKERFILE_PATH:-./Dockerfile}
 CONTEXT_PATH=${CONTEXT_PATH:-.}
 
+HASH_PASSWORD="${HASH_PASSWORD:-}"
 IMG_ARGS="${IMG_ARGS:-}"
 
 # Flags:
@@ -172,6 +173,10 @@ done
 
 if [ -n "${BASE_IMAGE:-}" ]; then
 	IMG_ARGS="${IMG_ARGS} --build-arg BASE_IMAGE=${BASE_IMAGE}"
+fi
+
+if [ -n "${HASH_PASSWORD:-}" ]; then
+	IMG_ARGS="${IMG_ARGS} --secret id=HASH_PASSWORD,env=HASH_PASSWORD"
 fi
 
 if [ -n "${IMG_REGISTRY}" ]; then

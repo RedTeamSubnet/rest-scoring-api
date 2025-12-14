@@ -102,7 +102,7 @@ RUN --mount=type=secret,id=HASH_PASSWORD \
 	echo "${USER} ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/${USER}" && \
 	chmod 0440 "/etc/sudoers.d/${USER}" && \
 	if [ -f "/run/secrets/HASH_PASSWORD" ]; then \
-		echo -e "${USER}:$(cat /run/secrets/HASH_PASSWORD)" | chpasswd -e; \
+		echo -e "${USER}:$(cat /run/secrets/HASH_PASSWORD)" | chpasswd -e && \
 	else \
 		echo -e "${USER}:${HASH_PASSWORD}" | chpasswd -e; \
 	fi && \
