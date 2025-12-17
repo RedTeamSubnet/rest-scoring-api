@@ -1,7 +1,128 @@
 services:
-  api:
+  subtensor:
+    image: ghcr.io/opentensor/subtensor-localnet:v2.0.11
+    restart: unless-stopped
+    environment:
+      TERM: ${TERM:-xterm}
+      TZ: ${TZ:-UTC}
     volumes:
-      - "./volumes/configs/rest-scoring-api:${RT_SCORING_API_CONFIGS_DIR:-/etc/rest-scoring-api}"
+      - "./volumes/storage/server-subtensor/data:/tmp"
+    # deploy:
+    #   replicas: 0
+    #   resources:
+    #     limits:
+    #       cpus: "1.0"
+    #       memory: 1G
+    ports:
+      - "${RT_BT_SUBTENSOR_WS_PORT:-9944}:9944"
+      # - "9945:9945"
+      # - "30334:30334"
+      # - "30335:30335"
+    command: ["False", "--no-purge"]
+    tty: true
+
+  sidecar-btcli:
+    image: redteamsubnet61/sidecar-btcli:latest
+    depends_on:
+      - subtensor
+    environment:
+      TERM: ${TERM:-xterm}
+      TZ: ${TZ:-UTC}
+      RT_BT_SUBTENSOR_NETWORK: "ws://subtensor:9944"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - "./volumes/storage/sidecar-btcli/data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
+      - "./volumes/.vscode-server:/home/rt-user/.vscode-server"
+    # deploy:
+    #   replicas: 0
+    #   resources:
+    #     limits:
+    #       cpus: "0.25"
+    #       memory: 256M
+    # command: ["/bin/bash"]
+    tty: true
+
+  storage-db:
+    image:  mongo:4.4.17-focal
+    restart: unless-stopped
+    environment:
+      TERM: ${TERM:-xterm}
+      MONGO_INITDB_ROOT_USERNAME: ${RT_STORAGE_DB_USERNAME:-rt_admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${RT_STORAGE_DB_PASSWORD:-RT_STORAGE_DB_PASSWORD123}
+    volumes:
+      - "./volumes/storage/storage-db/data:/data/db"
+      - "./volumes/storage/storage-db/configdb:/data/configdb"
+    #   - "./volumes/storage/storage-db/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro"
+    #   - "./volumes/storage/storage-db/logs:/var/log/mongodb"
+    # deploy:
+    #   replicas: 0
+    #   resources:
+    #     limits:
+    #       cpus: "1.0"
+    #       memory: 1G
+    ports:
+      - "${RT_STORAGE_DB_PORT:-27017}:${RT_STORAGE_DB_PORT:-27017}"
+    command: ["--port", "${RT_STORAGE_DB_PORT:-27017}"]
+    # healthcheck:
+    #   test: ["CMD-SHELL", "echo 'db.runCommand(\"ping\").ok' | mongo localhost:${RT_STORAGE_DB_PORT:-27017}/${RT_STORAGE_DB_DATABASE:-admin} --quiet"]
+    #   start_period: 15s
+    #   start_interval: 1s
+    #   interval: 1m
+    #   timeout: 5s
+    #   retries: 3
+    tty: true
+
+  storage-api:
+    image: redteamsubnet61/rest-storage-api:latest
+    depends_on:
+      - subtensor
+      - storage-db
+    restart: unless-stopped
+    environment:
+      TERM: ${TERM:-xterm}
+      TZ: ${TZ:-UTC}
+      RT_BT_SUBTENSOR_NETWORK: "ws://subtensor:9944"
+      RT_STORAGE_DB_HOST: storage-db
+      RT_STORAGE_DB_USERNAME: ${RT_STORAGE_DB_USERNAME:-rt_admin}
+      RT_STORAGE_DB_PASSWORD: "${RT_STORAGE_DB_PASSWORD:-RT_STORAGE_DB_PASSWORD123}"
+      RT_STORAGE_API_PORT: ${RT_STORAGE_API_PORT:-9949}
+      RT_STORAGE_TAOSTAT_API_KEY: ${RT_STORAGE_TAOSTAT_API_KEY}
+      RT_SCORING_API_HOTKEY: ${RT_SCORING_API_HOTKEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - "./volumes/storage/rest-storage-api/logs:${RT_STORAGE_API_LOGS_DIR:-/var/log/rest-storage-api}"
+      - "./volumes/storage/rest-storage-api/data:${RT_STORAGE_API_DATA_DIR:-/var/lib/rest-storage-api}"
+      - "./volumes/.vscode-server:/home/rt-user/.vscode-server"
+    # deploy:
+    #   replicas: 0
+    #   resources:
+    #     limits:
+    #       cpus: "2.0"
+    #       memory: 2G
+    ports:
+      - "${RT_STORAGE_API_PORT:-9949}:${RT_STORAGE_API_PORT:-9949}"
+    # command: ["/bin/bash"]
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:${RT_STORAGE_API_PORT:-9949}/ping"]
+    #   start_period: 30s
+    #   start_interval: 1s
+    #   interval: 5m
+    #   timeout: 5s
+    #   retries: 3
+    tty: true
+
+  scoring-api:
+    depends_on:
+      - subtensor
+      - sidecar-btcli
+      - storage-db
+      - storage-api
+    volumes:
+      - "./volumes/storage/sidecar-btcli/data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
       - "./volumes/storage/rest-scoring-api/logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"
       - "./volumes/storage/rest-scoring-api/data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
       - "./scripts/docker/docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh"

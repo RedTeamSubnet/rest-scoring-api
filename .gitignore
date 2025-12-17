@@ -515,8 +515,8 @@ datasets
 env
 *.bak
 pm2-process.json
-docker-compose.yml
-docker-compose.yaml
+docker-compose.override.yml
+docker-compose.override.yaml
 compose.override.yml
 compose.override.yaml
 example.py
@@ -527,4 +527,7 @@ test.py
 volumes/**
 !volumes/**/
 !volumes/**/*.gitkeep
-
+volumes/storage/storage-db/data/
+volumes/storage/storage-db/configdb/
+volumes/storage/server-subtensor/data/
+!volumes/configs/*

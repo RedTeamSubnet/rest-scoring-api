@@ -14,9 +14,6 @@ cd "${_PROJECT_DIR}" || exit 2
 
 
 ## --- Variables --- ##
-# Load from envrionment variables:
-PROJECT_SLUG="${PROJECT_SLUG:-rest-scoring-api}"
-
 # Flags:
 _IS_ALL=false
 ## --- Variables --- ##
@@ -59,14 +56,14 @@ main()
 {
 	echo "[INFO]: Cleaning..."
 
-	find . -type f -name ".DS_Store" -print -delete || exit 2
-	find . -type f -name ".Thumbs.db" -print -delete || exit 2
-	find . -type f -name ".coverage*" -print -delete || exit 2
+	find . -path "./volumes/storage" -prune -o -type f -name ".DS_Store" -print -exec rm -f {} + || exit 2
+	find . -path "./volumes/storage" -prune -o -type f -name ".Thumbs.db" -print -exec rm -f {} + || exit 2
+	find . -path "./volumes/storage" -prune -o -type f -name ".coverage*" -print -exec rm -f {} + || exit 2
 
-	find . -type d -name ".benchmarks" -exec rm -rfv {} + || exit 2
-	find . -type d -name ".pytest_cache" -exec rm -rfv {} + || exit 2
+	find . -path "./volumes/storage" -prune -o -type d -name ".benchmarks" -exec rm -rfv {} + || exit 2
+	find . -path "./volumes/storage" -prune -o -type d -name ".pytest_cache" -exec rm -rfv {} + || exit 2
+	find . -path "./volumes/storage" -prune -o -type d -name "__pycache__" -exec rm -rfv {} + || exit 2
 
-	rm -rfv "./tmp" || exit 2
 
 	local _is_docker_running=false
 	if command -v docker >/dev/null 2>&1 && docker info > /dev/null 2>&1; then
@@ -80,16 +77,27 @@ main()
 		fi
 	fi
 
-	find . -type d -name "__pycache__" -exec rm -rfv {} + || exit 2
-	find . -type d -name ".git" -prune -o -type d -name "logs" -exec rm -rfv {} + || exit 2
 
 	if [ "${_IS_ALL}" == true ]; then
 		if [ "${_is_docker_running}" == true ]; then
 			docker compose down -v --remove-orphans || exit 2
 		fi
 
-		rm -rfv "./data" || exit 2
-		rm -rfv "./volumes/storage/${PROJECT_SLUG}/data" || exit 2
+		rm -rf ./volumes/.vscode-server/* || {
+			sudo rm -rf ./volumes/.vscode-server/* || exit 2
+		}
+
+		find ./volumes/storage -type d -name "data" -exec rm -rfv {} + || {
+			sudo find ./volumes/storage -type d -name "data" -exec rm -rfv {} + || exit 2
+		}
+
+		find ./volumes/storage -type d -name "configdb" -exec rm -rfv {} + || {
+			sudo find ./volumes/storage -type d -name "configdb" -exec rm -rfv {} + || exit 2
+		}
+
+		find ./volumes/storage -type d -name "logs" -exec rm -rfv {} + || {
+			sudo find ./volumes/storage -type d -name "logs" -exec rm -rfv {} + || exit 2
+		}
 	fi
 
 	echo "[OK]: Done."

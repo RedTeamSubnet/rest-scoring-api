@@ -24,8 +24,7 @@ RUN --mount=type=cache,target=/root/.cache,sharing=locked \
 	rm -rfv /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
 	apt-get clean -y && \
 	apt-get update --fix-missing -o Acquire::CompressionTypes::Order::=gz && \
-	apt-get install -y --no-install-recommends \
-		git && \
+	apt-get install -y --no-install-recommends git && \
 	python -m pip install --timeout 60 -U pip
 
 RUN	--mount=type=cache,target=/root/.cache,sharing=locked \
@@ -145,7 +144,7 @@ COPY --from=builder /install /usr/local
 FROM base AS app
 
 WORKDIR "${RT_SCORING_API_DIR}"
-COPY --chown=${UID}:${GID} ./src ${RT_SCORING_API_DIR}
+COPY --chown=${UID}:${GID} ./src .
 COPY --chown=${UID}:${GID} --chmod=770 ./scripts/docker/*.sh /usr/local/bin/
 
 # VOLUME ["${RT_SCORING_API_DATA_DIR}"]

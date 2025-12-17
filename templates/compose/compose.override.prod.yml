@@ -1,8 +1,7 @@
 services:
-  api:
+  scoring-api:
     image: redteamsubnet61/rest-scoring-api:2.0.0-251202
     # volumes:
-    #   - "./volumes/configs/rest-scoring-api:${RT_SCORING_API_CONFIGS_DIR:-/etc/rest-scoring-api}"
     #   - "api-vscode-server:/home/rt-user/.vscode-server"
     # deploy:
     #   replicas: 0

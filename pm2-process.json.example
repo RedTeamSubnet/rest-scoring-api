@@ -2,7 +2,7 @@
 	"name": "scoring-api",
 	"interpreter": "/usr/bin/env",
 	"script": "python",
-	"args": "-u ./src/api/app.py",
+	"args": "-u -m src.api",
 	"min_uptime": 5000,
 	"max_restarts": 3,
 	"watch": false,

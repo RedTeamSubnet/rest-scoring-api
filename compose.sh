@@ -30,7 +30,7 @@ fi
 
 
 ## --- Variables --- ##
-_DEFAULT_SERVICE="api"
+_DEFAULT_SERVICE="scoring-api"
 ## --- Variables --- ##
 
 

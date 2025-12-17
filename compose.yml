@@ -1,32 +1,5 @@
 services:
-  subtensor:
-    image: ghcr.io/opentensor/subtensor-localnet:v2.0.11
-    restart: unless-stopped
-    environment:
-      TERM: ${TERM:-xterm}
-      TZ: ${TZ:-UTC}
-    volumes:
-      - "subtensor-data:/tmp"
-    command: ["False", "--no-purge"]
-    tty: true
-
-  sidecar-btcli:
-    image: redteamsubnet61/sidecar-btcli:latest
-    depends_on:
-      - subtensor
-    restart: unless-stopped
-    environment:
-      TERM: ${TERM:-xterm}
-      TZ: ${TZ:-UTC}
-      RT_BT_SUBTENSOR_NETWORK: ${RT_BT_SUBTENSOR_NETWORK:-ws://subtensor:9944}
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - "sidecar-btcli-data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
-    tty: true
-
-  api:
+  scoring-api:
     image: redteamsubnet61/rest-scoring-api:latest
     build:
       context: .
@@ -41,14 +14,14 @@ services:
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "sidecar-btcli-data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
-      - "api-logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"
-      - "api-data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
+      - "scoring-api-logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"
+      - "scoring-api-data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
     ports:
       - "${RT_SCORING_API_PORT:-47920}:${RT_SCORING_API_PORT:-47920}"
     tty: true
 
+
 volumes:
-  subtensor-data:
   sidecar-btcli-data:
-  api-logs:
-  api-data:
+  scoring-api-logs:
+  scoring-api-data:
