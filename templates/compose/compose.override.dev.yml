@@ -121,6 +121,9 @@ services:
       - sidecar-btcli
       - storage-db
       - storage-api
+    environment:
+      RT_BT_SUBTENSOR_NETWORK: "ws://subtensor:9944"
+      RT_STORAGE_API_URL: "http://storage-api:9949"
     volumes:
       - "./volumes/storage/sidecar-btcli/data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
       - "./volumes/storage/rest-scoring-api/logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"

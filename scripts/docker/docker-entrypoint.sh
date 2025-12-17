@@ -42,6 +42,7 @@ _run()
 		done
 	fi
 
+	sleep 5
 	echo "[INFO]: Starting ${RT_SCORING_API_SLUG}..."
 	exec sg docker "exec python -u -m api \
 		--wallet.name \"${RT_SCORING_API_WALLET_NAME:-scoring-api}\" \
