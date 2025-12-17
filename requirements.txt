@@ -1,2 +1,2 @@
-# -r ../../requirements.txt
-prometheus-fastapi-instrumentator>=7.0.2,<8.0.0
+# redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@v3.0.0
+redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@refactor/v1

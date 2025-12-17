@@ -1,0 +1,27 @@
+services:
+  scoring-api:
+    image: redteamsubnet61/rest-scoring-api:latest
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      TERM: ${TERM:-xterm}
+      TZ: ${TZ:-UTC}
+      RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-47920}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "sidecar-btcli-data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
+      - "scoring-api-logs:${RT_SCORING_API_LOGS_DIR:-/var/log/rest-scoring-api}"
+      - "scoring-api-data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
+    ports:
+      - "${RT_SCORING_API_PORT:-47920}:${RT_SCORING_API_PORT:-47920}"
+    tty: true
+
+
+volumes:
+  sidecar-btcli-data:
+  scoring-api-logs:
+  scoring-api-data:

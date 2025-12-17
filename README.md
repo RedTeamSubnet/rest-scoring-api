@@ -1,8 +1,8 @@
-# RedTeam Subnet Rewarding Server
+# RedTeam subnet - Scoring REST API
 
 ## Overview
 
-The Rewarding Server is a specialized validator node that provides centralized scoring for the RedTeam Subnet (netuid 61). It extends the standard Validator functionality but focuses exclusively on scoring and comparing miner submissions rather than querying miners or setting weights directly.
+The Scoring API is a specialized validator node that provides centralized scoring for the RedTeam Subnet (netuid 61). It extends the standard Validator functionality but focuses exclusively on scoring and comparing miner submissions rather than querying miners or setting weights directly.
 
 ## Key Features
 
@@ -19,7 +19,7 @@ The Rewarding Server is a specialized validator node that provides centralized s
 
 ### State Management
 
-The rewarding server maintains several important state variables:
+The scoring API server maintains several important state variables:
 
 - `validators_miner_commits`: Stores current miner commits from all validators, indexed by validator UID and hotkey
 - `miner_commits`: Aggregated miner commits from all validators, indexed by miner UID and hotkey
@@ -89,14 +89,14 @@ The rewarding server maintains several important state variables:
 
 ## Setup
 
-Setup steps for the rewarding server are the same as the validator node, please refer to the [validator README](../../docs/1.validator.md) for more details.
+Setup steps for the scoring server are the same as the validator node, please refer to the [validator README](../../docs/1.validator.md) for more details.
 
 ### Running the Server
 
 ```bash
-python services/rewarding/app.py \
-    --reward_app.port 47920 \
-    --reward_app.epoch_length 60 \
+python -u -m src.api \
+    --scoring_api.port 47920 \
+    --scoring_api.epoch_length 60 \
     --netuid 61 \
     --subtensor.network <subtensor-endpoint> \
     --wallet.name <wallet-name> \
@@ -109,21 +109,21 @@ python services/rewarding/app.py \
 
 | Argument | Description | Default |
 |----------|-------------|---------|
-| `--reward_app.port` | Port for the FastAPI server | 47920 |
-| `--reward_app.epoch_length` | Processing cycle duration (seconds) | 60 |
+| `--scoring_api.port` | Port for the FastAPI server | 47920 |
+| `--scoring_api.epoch_length` | Processing cycle duration (seconds) | 60 |
 | `--netuid` | Subnet ID to connect to | Required |
 | `--subtensor.network` | Subtensor endpoint | Required |
 | `--wallet.name` | Wallet name | Required |
 | `--wallet.hotkey` | Wallet hotkey name | Required |
 | `--validator.cache_dir` | Directory for caching scoring results | `./.cache` |
-| `--validator.hf_repo_id` | Hugging Face repo ID for model weights | `my_username/rt.reward-storage` |
+| `--validator.hf_repo_id` | Hugging Face repo ID for model weights | `my_username/rest-scoring-api` |
 
 ## Integration for Validators
 
 Validators can use the centralized scoring service by:
 
 1. Adding the `--validator.use_centralized_scoring` flag to their validator command
-2. The validator will automatically fetch scoring results from the rewarding server
+2. The validator will automatically fetch scoring results from the scoring API server
 3. This eliminates the need for each validator to run scoring infrastructure
 
 ## Development & Troubleshooting
@@ -137,11 +137,11 @@ Validators can use the centralized scoring service by:
 ### Common Issues
 
 - If scoring results aren't being updated, check network connectivity to storage service
-- Verify that the reward app has sufficient stake in the metagraph
-- Ensure the REWARD_APP_HOTKEY environment variable matches the wallet.hotkey
+- Verify that the scoring API has sufficient stake in the metagraph
+- Ensure the SCORING_API_HOTKEY environment variable matches the wallet.hotkey
 
 ### Security Considerations
 
-- The reward app has access to all validator submissions and must maintain data integrity
+- The scoring API has access to all validator submissions and must maintain data integrity
 - Uses validation headers for secure communication with storage service
 - Maintains proper synchronization between memory cache and persistent storage
