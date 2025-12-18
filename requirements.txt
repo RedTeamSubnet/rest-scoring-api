@@ -1,2 +1,2 @@
-# redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@v3.0.0
-redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@refactor/v1
+# redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@v3.1.0
+redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@dev
