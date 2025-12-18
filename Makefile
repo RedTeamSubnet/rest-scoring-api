@@ -1,4 +1,4 @@
-.PHONY: help validate start logs stop compose clean get-version test bump-version build release docs changelog backup
+.PHONY: help validate start logs stop compose clean get-version test bump-version build release changelog backup
 
 help:
 	@echo "make help         -- show this help"
@@ -14,7 +14,6 @@ help:
 	@echo "make build        -- build docker image"
 	@echo "make release      -- release new version"
 	@echo "make changelog    -- update changelog"
-	@echo "make docs         -- build documentation"
 	@echo "make backup       -- backup data"
 
 
@@ -53,9 +52,6 @@ release:
 
 changelog:
 	./scripts/changelog.sh $(MAKEFLAGS)
-
-docs:
-	./scripts/docs.sh $(MAKEFLAGS)
 
 backup:
 	./scripts/backup.sh
