@@ -53,6 +53,7 @@ ARG UID=1000
 ARG GID=11000
 ARG USER=rt-user
 ARG GROUP=rt-group
+ARG DOCKER_VERSION="28.5.2"
 
 ENV RT_SCORING_API_SLUG="${RT_SCORING_API_SLUG}" \
 	RT_HOME_DIR="${RT_HOME_DIR}" \
@@ -89,7 +90,7 @@ RUN --mount=type=secret,id=HASH_PASSWORD \
 		curl \
 		git \
 		nano && \
-	curl -fsSL https://get.docker.com/ | sh && \
+	curl -fsSL https://get.docker.com/ | sh -s -- --version ${DOCKER_VERSION} && \
 	apt-get clean -y && \
 	sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
 	sed -i -e 's/# en_AU.UTF-8 UTF-8/en_AU.UTF-8 UTF-8/' /etc/locale.gen && \
