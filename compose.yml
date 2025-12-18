@@ -4,6 +4,7 @@ services:
     build:
       context: .
     restart: unless-stopped
+    privileged: true
     environment:
       TERM: ${TERM:-xterm}
       TZ: ${TZ:-UTC}
