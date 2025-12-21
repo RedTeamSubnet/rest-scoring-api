@@ -9,6 +9,9 @@ services:
       TERM: ${TERM:-xterm}
       TZ: ${TZ:-UTC}
       RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-47920}
+      HF_TOKEN: "${HF_TOKEN}"
+      RT_SCORING_API_HF_REPO: ${RT_SCORING_API_HF_REPO}
+      RT_SCORING_API_HOTKEY: ${RT_SCORING_API_HOTKEY}
     env_file:
       - path: .env
         required: false
