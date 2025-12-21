@@ -2,7 +2,7 @@ services:
   scoring-api:
     image: redteamsubnet61/rest-scoring-api:2.0.0-251202
     # volumes:
-    #   - "api-vscode-server:/home/rt-user/.vscode-server"
+    #   - "scoring-api-vscode-server:/home/rt-user/.vscode-server"
     # deploy:
     #   replicas: 0
     #   resources:
@@ -20,4 +20,4 @@ services:
 
 
 # volumes:
-#   api-vscode-server:
+#   scoring-api-vscode-server:
