@@ -25,7 +25,7 @@ fi
 
 
 ## --- Variables --- ##
-# Load from envrionment variables:
+# Load from environment variables:
 PROJECT_SLUG="${PROJECT_SLUG:-rest-scoring-api}"
 BACKUPS_DIR="${BACKUPS_DIR:-./volumes/backups}"
 ## --- Variables --- ##

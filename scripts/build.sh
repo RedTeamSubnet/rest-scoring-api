@@ -31,7 +31,7 @@ fi
 
 
 ## --- Variables --- ##
-# Load from envrionment variables:
+# Load from environment variables:
 BASE_IMAGE=${BASE_IMAGE:-}
 IMG_REGISTRY=${IMG_REGISTRY:-redteamsubnet61}
 IMG_REPO=${PROJECT_SLUG:-rest-scoring-api}
