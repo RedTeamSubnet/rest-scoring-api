@@ -138,6 +138,7 @@
 		"**/data": true,
 		"**/dataset": true,
 		"**/datasets": true,
+		"**/volumes/storage": true,
 		"**/*.egg-info": true,
 		"**/*.pyc": true,
 		"**/*.log": true,
