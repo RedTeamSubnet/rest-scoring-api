@@ -1,6 +1,6 @@
 services:
   scoring-api:
-    image: redteamsubnet61/rest-scoring-api:2.0.0-251202
+    image: redteamsubnet61/rest-scoring-api:3.0.0-251224
     build:
       context: .
     restart: unless-stopped
@@ -23,5 +23,3 @@ services:
     ports:
       - "${RT_SCORING_API_PORT:-47920}:${RT_SCORING_API_PORT:-47920}"
     tty: true
-  rest-scoring-api:
-    image: redteamsubnet61/rest-scoring-api:3.0.0-251224

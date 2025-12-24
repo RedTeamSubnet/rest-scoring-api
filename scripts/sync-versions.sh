@@ -28,7 +28,7 @@ fi
 # Load from environment variables:
 VERSION_FILE_PATH="${VERSION_FILE_PATH:-./src/api/__version__.py}"
 COMPOSE_FILE_PATH="${COMPOSE_FILE_PATH:-compose.yml}"
-SERVICE_NAME="${SERVICE_NAME:-rest-scoring-api}"
+SERVICE_NAME="${SERVICE_NAME:-scoring-api}"
 IMG_NAME="${IMG_NAME:-redteamsubnet61/rest-scoring-api}"
 
 # Flags:
