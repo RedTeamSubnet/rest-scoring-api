@@ -523,11 +523,12 @@ example.py
 test.py
 
 
-# Volumes:
+# Specific directories:
 volumes/**
 !volumes/**/
 !volumes/**/*.gitkeep
 volumes/storage/storage-db/data/
 volumes/storage/storage-db/configdb/
 volumes/storage/server-subtensor/data/
-!volumes/configs/*
+!volumes/configs/**/
+!volumes/configs/**/*
