@@ -11,7 +11,7 @@ services:
       RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-47920}
       HF_TOKEN: "${HF_TOKEN}"
       RT_SCORING_API_HF_REPO: ${RT_SCORING_API_HF_REPO}
-      RT_SCORING_API_HOTKEY: ${RT_SCORING_API_HOTKEY}
+      RT_SCORING_API_HOTKEY_ADDRESS: ${RT_SCORING_API_HOTKEY_ADDRESS}
     env_file:
       - path: .env
         required: false

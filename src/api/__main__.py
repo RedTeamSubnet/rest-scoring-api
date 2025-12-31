@@ -31,7 +31,7 @@ from .router import start_ping_server
 ENV_PREFIX = "RT_"
 ENV_PREFIX_SCORING_API = f"{ENV_PREFIX}SCORING_API_"
 
-SCORING_API_HOTKEY = os.getenv(f"{ENV_PREFIX_SCORING_API}HOTKEY")
+SCORING_API_HOTKEY_ADDRESS = os.getenv(f"{ENV_PREFIX_SCORING_API}HOTKEY_ADDRESS")
 SCORING_API_UID = int(os.getenv(f"{ENV_PREFIX_SCORING_API}UID"))
 
 
@@ -139,13 +139,13 @@ class ScoringApi(BaseValidator):
         self.metagraph = self.subtensor.metagraph(self.config.netuid)
         bt.logging.info(f"Metagraph: {self.metagraph}")
 
-        if SCORING_API_HOTKEY != self.wallet.hotkey.ss58_address:
+        if SCORING_API_HOTKEY_ADDRESS != self.wallet.hotkey.ss58_address:
             bt.logging.error(
-                f"Scoring API hotkey {SCORING_API_HOTKEY} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
+                f"Scoring API hotkey {SCORING_API_HOTKEY_ADDRESS} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
             )
             exit()
         else:
-            self.hotkey = SCORING_API_HOTKEY
+            self.hotkey = SCORING_API_HOTKEY_ADDRESS
             self.uid = SCORING_API_UID
             bt.logging.success(
                 f"Scoring API initialized with hotkey: {self.hotkey}, uid: {self.uid}"
