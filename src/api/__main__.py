@@ -1,6 +1,5 @@
 import os
 import time
-import argparse
 import datetime
 import threading
 import traceback
@@ -9,8 +8,8 @@ from copy import deepcopy
 import requests
 import bittensor as bt
 
-from redteam_core import BaseValidator, constants
-from redteam_core.common import get_config
+from redteam_core import constants
+from redteam_core.config import ENV_PREFIX_SCORING_API
 from redteam_core.challenge_pool import ACTIVE_CHALLENGES
 from redteam_core.validator import (
     ChallengeManager,
@@ -26,24 +25,12 @@ from redteam_core.validator.utils import create_validator_request_header_fn
 
 from .cache import ScoringLRUCache
 from .router import start_ping_server
+from ._base import BaseScoringApi
+
+SCORING_API_PORT = int(os.getenv(f"{ENV_PREFIX_SCORING_API}PORT", 8000))
 
 
-ENV_PREFIX = "RT_"
-ENV_PREFIX_SCORING_API = f"{ENV_PREFIX}SCORING_API_"
-
-SCORING_API_HOTKEY = os.getenv(f"{ENV_PREFIX_SCORING_API}HOTKEY")
-SCORING_API_UID = int(os.getenv(f"{ENV_PREFIX_SCORING_API}UID"))
-
-
-def get_scoring_api_config() -> bt.Config:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scoring_api.epoch_length", type=int, default=60)
-    parser.add_argument("--scoring_api.port", type=int, default=47920)
-    config = get_config(parser)
-    return config
-
-
-class ScoringApi(BaseValidator):
+class ScoringApi(BaseScoringApi):
     """
     A centralized scoring service for the RedTeam network.
 
@@ -60,7 +47,7 @@ class ScoringApi(BaseValidator):
     - Maintains its own scoring cache and state
     """
 
-    def __init__(self, config: bt.Config):
+    def __init__(self):
         """
         Initialize the scoring API as a centralized scoring service.
 
@@ -76,12 +63,15 @@ class ScoringApi(BaseValidator):
             - storage_manager: Persistent storage manager
             - active_challenges: Dictionary of active challenges with controllers
         """
-        super().__init__(config)
+        super().__init__()
 
         # Override hotkey and uid from environment if provided
-        if SCORING_API_HOTKEY and SCORING_API_UID is not None:
-            self.hotkey = SCORING_API_HOTKEY
-            self.uid = SCORING_API_UID
+        if (
+            self.scoring_api_config.HOTKEY_ADDRESS
+            and self.scoring_api_config.UID is not None
+        ):
+            self.hotkey = self.scoring_api_config.HOTKEY_ADDRESS
+            self.uid = self.scoring_api_config.UID
 
         # Setup scoring-specific components
         self.validator_request_header_fn = create_validator_request_header_fn(
@@ -98,9 +88,9 @@ class ScoringApi(BaseValidator):
 
         # Setup storage manager
         self.storage_manager = StorageManager(
-            cache_dir=self.config.validator.cache_dir,
+            cache_dir=self.config.BITTENSOR.SUBNET.CACHE_DIR,
             validator_request_header_fn=self.validator_request_header_fn,
-            hf_repo_id=self.config.validator.hf_repo_id,
+            hf_repo_id=self.config.BITTENSOR.SUBNET.HF_REPO_ID,
             sync_on_init=True,
         )
 
@@ -108,6 +98,7 @@ class ScoringApi(BaseValidator):
         self.challenge_managers: dict[str, ChallengeManager] = {}
         self.active_challenges: dict = {}
         self._init_active_challenges()
+        self._init_scoring_api_state()
 
         # Initialize scoring API state
         self.validators_miner_commits: dict[
@@ -128,45 +119,69 @@ class ScoringApi(BaseValidator):
             f"Scoring API constant values: {constants.model_dump_json(indent=2)}"
         )
 
-    def setup_bittensor_objects(self):
-        bt.logging.info("Setting up Bittensor objects.")
-        self.wallet = bt.wallet(config=self.config)
-        bt.logging.info(f"Wallet: {self.wallet}")
-        self.subtensor = bt.subtensor(config=self.config)
-        bt.logging.info(f"Subtensor: {self.subtensor}")
-        self.dendrite = bt.dendrite(wallet=self.wallet)
-        bt.logging.info(f"Dendrite: {self.dendrite}")
-        self.metagraph = self.subtensor.metagraph(self.config.netuid)
-        bt.logging.info(f"Metagraph: {self.metagraph}")
+    def load_state(self, state: dict) -> None:
+        # Load scoring dates
+        self.scoring_dates = state.get("scoring_dates", [])
 
-        if SCORING_API_HOTKEY != self.wallet.hotkey.ss58_address:
-            bt.logging.error(
-                f"Scoring API hotkey {SCORING_API_HOTKEY} does not match wallet hotkey {self.wallet.hotkey.ss58_address}"
+        # Load challenge managers state using their load_state class method
+        for challenge_name, manager_state in state.get(
+            "challenge_managers", {}
+        ).items():
+            if challenge_name in self.challenge_managers:
+                # Create new challenge manager with loaded state
+                loaded_manager = self.challenge_managers[challenge_name].load_state(
+                    state=manager_state,
+                    challenge_info=self.active_challenges[challenge_name],
+                    metagraph=self.metagraph,
+                )
+                # Update the existing challenge manager with the loaded state
+                self.challenge_managers[challenge_name] = loaded_manager
+
+        # Try to load miner commits from challenge managers
+        for challenge_name, manager in self.challenge_managers.items():
+            for miner_state in manager.miner_states.values():
+                if miner_state.latest_commit:
+                    self.miner_commits.setdefault(
+                        (miner_state.miner_uid, miner_state.miner_hotkey), {}
+                    )[challenge_name] = miner_state.latest_commit
+
+    def _init_scoring_api_state(self):
+
+        bt.logging.info("[INIT] Starting scoring api's  state initialization...")
+
+        state = None
+        state = self.storage_manager.get_latest_validator_state_from_storage(
+            validator_uid=self.uid,
+            validator_hotkey=self.wallet.hotkey.ss58_address,
+        )
+        if not state:
+            bt.logging.warning(
+                f"[INIT] No scoring api state found in centralized storage for scoring api {self.uid}, hotkey: {self.wallet.hotkey.ss58_address}, falling back to cache"
             )
-            exit()
+            state = self.storage_manager.get_latest_validator_state_from_cache(
+                validator_uid=self.uid,
+                validator_hotkey=self.wallet.hotkey.ss58_address,
+            )
         else:
-            self.hotkey = SCORING_API_HOTKEY
-            self.uid = SCORING_API_UID
             bt.logging.success(
-                f"Scoring API initialized with hotkey: {self.hotkey}, uid: {self.uid}"
+                f"[INIT] Successfully retrieved scoring api state from centralized storage for scoring api {self.uid}, hotkey: {self.wallet.hotkey.ss58_address}"
             )
 
-    # MARK: Initialization and Setup
+        if state:
+            # Load the state into the current instance
+            self.load_state(state)
+            bt.logging.success("[INIT] Successfully loaded existing scoring api state")
+        else:
+            bt.logging.info("[INIT] No existing state found, using empty state")
+
+        bt.logging.success("[INIT] Scoring API state initialization completed")
+
     def _init_active_challenges(self):
         """
         Initializes and updates challenge managers based on current active challenges.
         Filters challenges by date and maintains challenge manager consistency.
         """
-        # Avoid mutating the original ACTIVE_CHALLENGES
-        all_challenges = deepcopy(ACTIVE_CHALLENGES)
-
-        # Remove challenges that are not active and setup the active challenges
-        if datetime.datetime.now(datetime.timezone.utc) <= datetime.datetime(
-            2025, 6, 10, 14, 0, 0, 0, datetime.timezone.utc
-        ):
-            pass
-
-        self.active_challenges = all_challenges
+        self.active_challenges = deepcopy(ACTIVE_CHALLENGES)
 
         for challenge in self.active_challenges.keys():
             if challenge not in self.challenge_managers:
@@ -176,7 +191,7 @@ class ScoringApi(BaseValidator):
                     challenge_info=self.active_challenges[challenge],
                     metagraph=self.metagraph,
                 )
-        # Remove challenge managers for inactive challenges with dict comprehension
+
         self.challenge_managers = {
             challenge: self.challenge_managers[challenge]
             for challenge in self.challenge_managers
@@ -307,7 +322,7 @@ class ScoringApi(BaseValidator):
         """
         Retrieves the storage API key from the config.
         """
-        endpoint = f"{constants.STORAGE_API.URL}/get-api-key"
+        endpoint = f"{constants.STORAGE_API_URL}/get-api-key"
         data = {"validator_uid": self.uid, "validator_hotkey": self.hotkey}
         header = self.validator_request_header_fn(data)
         response = requests.post(endpoint, json=data, headers=header)
@@ -432,7 +447,6 @@ class ScoringApi(BaseValidator):
             if commit.docker_hub_id in self.scoring_results.get_all_for_challenge(
                 challenge
             ):
-                # Use results for already scored commits
                 cached_result = self.scoring_results.get(
                     challenge=challenge, docker_hub_id=commit.docker_hub_id
                 )
@@ -581,7 +595,7 @@ class ScoringApi(BaseValidator):
         for validator_uid, validator_hotkey in valid_validators:
             # Skip if request fails
             try:
-                endpoint = f"{constants.STORAGE_API.URL}/fetch-latest-miner-commits"
+                endpoint = f"{constants.STORAGE_API_URL}/fetch-latest-miner-commits"
                 data = {
                     "validator_uid": validator_uid,
                     "validator_hotkey": validator_hotkey,
@@ -764,9 +778,7 @@ class ScoringApi(BaseValidator):
         challenge_names = (
             [challenge_name] if challenge_name else list(self.scoring_results.keys())
         )
-        endpoint = f"{constants.STORAGE_API.URL}/upload-centralized-score"
-
-        all_scoring_results = []
+        endpoint = f"{constants.STORAGE_API_URL}/upload-centralized-score"
 
         for challenge_name in challenge_names:
             scoring_results_to_send: list[dict] = []
@@ -792,7 +804,6 @@ class ScoringApi(BaseValidator):
                     },
                 }
                 scoring_results_to_send.append(scoring_result)
-                all_scoring_results.append(scoring_result)
 
                 if len(scoring_results_to_send) >= 5:
                     try:
@@ -839,7 +850,7 @@ class ScoringApi(BaseValidator):
                 # Request the most recent entries for this challenge
                 entries_per_challenge = 256  # Match the LRU cache size
 
-                endpoint = f"{constants.STORAGE_API.URL}/fetch-centralized-score"
+                endpoint = f"{constants.STORAGE_API_URL}/fetch-centralized-score"
                 data = {
                     "challenge_names": [challenge_name],
                     "limit": entries_per_challenge,  # Get the most recent entries
@@ -916,7 +927,6 @@ class ScoringApi(BaseValidator):
         for challenge_name in self.active_challenges.keys():
             diskcache_ = self.storage_manager._get_cache(challenge_name)
             memcache_ = self.scoring_results.get_all_for_challenge(challenge_name)
-            cache_keys_to_delete = []
 
             for hashed_cache_key in diskcache_.iterkeys():
                 commit = diskcache_.get(hashed_cache_key)
@@ -925,15 +935,10 @@ class ScoringApi(BaseValidator):
                         commit
                     )  # Model validate the commit
                 except Exception:
-                    # Skip if commit is not valid
-                    # Do this if we want to clean up invalid commits
-                    # cache_keys_to_delete.append(hashed_cache_key)
                     continue
 
                 # Check if docker_hub_id is in self.scoring_results
                 if commit.docker_hub_id not in memcache_:
-                    # Do this if we want to clean up commits with no scoring results
-                    # cache_keys_to_delete.append(hashed_cache_key)
                     continue
 
                 # Found the commit in self.scoring_results, now we make sure cache have correct scoring_logs
@@ -960,23 +965,13 @@ class ScoringApi(BaseValidator):
                         ]
                         diskcache_[hashed_cache_key] = commit.model_dump()
 
-            # Clean up cache entries that we want to delete
-            for hashed_cache_key in cache_keys_to_delete:
-                diskcache_.delete(hashed_cache_key)
-
-    def set_weights(self):
-        pass
-
 
 if __name__ == "__main__":
-    # Initialize and run app
-    config = get_scoring_api_config()
-
     server_thread = threading.Thread(
-        target=start_ping_server, args=(config.scoring_api.port,), daemon=True
+        target=start_ping_server, args=(SCORING_API_PORT,), daemon=True
     )
     server_thread.start()
-    with ScoringApi(config) as app:
+    with ScoringApi() as app:
         while True:
             bt.logging.info("ScoringApi is running...")
             time.sleep(constants.EPOCH_LENGTH // 4)
