@@ -8,8 +8,11 @@ services:
     environment:
       TERM: ${TERM:-xterm}
       TZ: ${TZ:-UTC}
-      RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-47920}
+      RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-8090}
       RT_SCORING_API_HOTKEY_NAME: ${RT_SCORING_API_HOTKEY_NAME:-scoring-api}
+      RT_SCORING_API_UID: ${RT_SCORING_API_UID:--1}
+      RT_BT_SUBTENSOR_NETWORK: ${RT_BT_SUBTENSOR_NETWORK:-ws://localhost:9944}
+      RT_STORAGE_API_URL: ${RT_STORAGE_API_URL:-http://localhost:9978/}
     env_file:
       - path: .env
         required: false
