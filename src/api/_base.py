@@ -31,7 +31,7 @@ class BaseScoringApi(ABC):
         elif self.config.BITTENSOR.LOGGING_LEVEL == "TRACE":
             bt.logging.enable_trace()
         bt.logging.info(
-            f"Running validator for subnet: {self.config.BITTENSOR.SUBNET.NETUID} on network: {self.config.BITTENSOR.SUBTENSOR_NETWORK} with config:"
+            f"Running validator for subnet: {self.config.BITTENSOR.SUBNET_NETUID} on network: {self.config.BITTENSOR.SUBTENSOR_NETWORK} with config:"
         )
         bt.logging.info(self.config.model_dump_json())
 
@@ -49,7 +49,7 @@ class BaseScoringApi(ABC):
         self.dendrite = bt.dendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
-        self.metagraph = self.subtensor.metagraph(self.config.BITTENSOR.SUBNET.NETUID)
+        self.metagraph = self.subtensor.metagraph(self.config.BITTENSOR.SUBNET_NETUID)
         bt.logging.info(f"Metagraph: {self.metagraph}")
 
         if self.wallet.hotkey.ss58_address not in self.metagraph.hotkeys:
@@ -134,7 +134,7 @@ class BaseScoringApi(ABC):
         bt_config.subtensor.network = self.config.BITTENSOR.SUBTENSOR_NETWORK
 
         # Set netuid (subnet configuration)
-        bt_config.netuid = self.config.BITTENSOR.SUBNET.NETUID
+        bt_config.netuid = self.config.BITTENSOR.SUBNET_NETUID
 
         return bt_config
 
