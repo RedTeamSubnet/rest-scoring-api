@@ -87,7 +87,7 @@ class ScoringApi(BaseScoringApi):
 
         # Setup storage manager
         self.storage_manager = StorageManager(
-            cache_dir=self.config.BITTENSOR.SUBNET.CACHE_DIR,
+            cache_dir=self.scoring_api_config.CACHE_DIR,
             validator_request_header_fn=self.validator_request_header_fn,
             hf_repo_id="",
             sync_on_init=True,
