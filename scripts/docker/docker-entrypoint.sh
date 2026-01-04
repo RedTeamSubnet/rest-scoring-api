@@ -44,16 +44,7 @@ _run()
 
 	sleep 5
 	echo "[INFO]: Starting ${RT_SCORING_API_SLUG}..."
-	exec sg docker "exec python -u -m api \
-		--wallet.name \"${RT_SCORING_API_WALLET_NAME:-scoring-api}\" \
-		--wallet.path \"${RT_BTCLI_WALLET_DIR:-${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}/wallets}\" \
-		--wallet.hotkey \"default\" \
-		--subtensor.network \"${RT_BT_SUBTENSOR_NETWORK:-${RT_BT_SUBTENSOR_WS_SCHEME:-ws}://${RT_BT_SUBTENSOR_HOST:-subtensor}:${RT_BT_SUBTENSOR_WS_PORT:-9944}}\" \
-		--netuid \"${RT_BT_SUBNET_NETUID:-2}\" \
-		--scoring_api.port \"${RT_SCORING_API_PORT:-47920}\" \
-		--scoring_api.epoch_length \"${RT_SCORING_API_EPOCH_LENGTH:-60}\" \
-		--validator.cache_dir \"${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}/.cache\" \
-		--validator.hf_repo_id \"${RT_SCORING_API_HF_REPO:-redteamsubnet61/rest-scoring-api}\"" || exit 2
+	exec sg docker "exec python -u -m api" || exit 2
 
 	exit 0
 }
@@ -112,7 +103,6 @@ main()
 	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type f -exec sudo chmod 664 {} + || exit 2
 	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type d -exec sudo chmod +s {} + || exit 2
 
-	echo "${USER} ALL=(ALL) ALL" | sudo tee -a "/etc/sudoers.d/${USER}" > /dev/null || exit 2
 	echo ""
 
 	## Parsing input:

@@ -26,7 +26,7 @@ class ScoringApiMainConfig(BaseConfig):
     )
     model_config = SettingsConfigDict(env_prefix=ENV_PREFIX_SCORING_API)
 
-    @model_validator("before")
+    @model_validator(mode="after")
     def validate_cache_dir(self) -> Self:
         """Ensure cache directory exists and is writable."""
         expanded = os.path.expanduser(self.CACHE_DIR)
