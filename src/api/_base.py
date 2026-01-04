@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import traceback
@@ -6,7 +7,7 @@ from abc import ABC, abstractmethod
 import bittensor as bt
 from substrateinterface import SubstrateInterface
 from redteam_core.config import MainConfig
-from config import ScoringApiMainConfig
+from .config import ScoringApiMainConfig
 
 
 class BaseScoringApi(ABC):
@@ -25,9 +26,9 @@ class BaseScoringApi(ABC):
     def setup_logging(self):
         bt.logging.enable_default()
         bt.logging.enable_info()
-        if self.config.BITTENSOR.LOGGING.LEVEL == "DEBUG":
+        if self.config.BITTENSOR.LOGGING_LEVEL == "DEBUG":
             bt.logging.enable_debug()
-        elif self.config.BITTENSOR.LOGGING.LEVEL == "TRACE":
+        elif self.config.BITTENSOR.LOGGING_LEVEL == "TRACE":
             bt.logging.enable_trace()
         bt.logging.info(
             f"Running validator for subnet: {self.config.BITTENSOR.SUBNET.NETUID} on network: {self.config.BITTENSOR.SUBTENSOR_NETWORK} with config:"
@@ -122,18 +123,15 @@ class BaseScoringApi(ABC):
         """
         bt_config = bt.Config()
         # Set wallet configuration
+        if bt_config.wallet is None:
+            bt_config.wallet = bt.Config()
+        bt_config.wallet.path = os.getenv("RT_BTCLI_WALLET_DIR", "./wallets")
         bt_config.wallet.name = self.scoring_api_config.WALLET_NAME
         bt_config.wallet.hotkey = self.scoring_api_config.HOTKEY_NAME
 
-        # Set subtensor configuration
+        if bt_config.subtensor is None:
+            bt_config.subtensor = bt.Config()
         bt_config.subtensor.network = self.config.BITTENSOR.SUBTENSOR_NETWORK
-
-        # Set axon configuration
-        bt_config.axon.port = self.config.BITTENSOR.AXON_PORT
-
-        # Set logging configuration
-        bt_config.logging.logging_dir = self.config.BITTENSOR.LOGGING.DIR
-        bt_config.logging.logging_level = self.config.BITTENSOR.LOGGING.LEVEL
 
         # Set netuid (subnet configuration)
         bt_config.netuid = self.config.BITTENSOR.SUBNET.NETUID

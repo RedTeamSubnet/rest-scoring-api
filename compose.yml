@@ -9,17 +9,13 @@ services:
       TERM: ${TERM:-xterm}
       TZ: ${TZ:-UTC}
       RT_SCORING_API_PORT: ${RT_SCORING_API_PORT:-47920}
-      HF_TOKEN: "${HF_TOKEN}"
-      RT_SCORING_API_HF_REPO: ${RT_SCORING_API_HF_REPO}
-      RT_SCORING_API_HOTKEY: ${RT_SCORING_API_HOTKEY}
+      RT_SCORING_API_HOTKEY_NAME: ${RT_SCORING_API_HOTKEY_NAME:-scoring-api}
     env_file:
       - path: .env
         required: false
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "./volumes/storage/sidecar-btcli/data:/var/lib/sidecar-btcli"
-      - "./volumes/storage/rest-scoring-api/logs:/var/log/rest-scoring-api"
-      - "./volumes/storage/rest-scoring-api/data:/var/lib/rest-scoring-api"
     ports:
       - "${RT_SCORING_API_PORT:-47920}:${RT_SCORING_API_PORT:-47920}"
     tty: true

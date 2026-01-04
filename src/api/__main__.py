@@ -8,7 +8,6 @@ from copy import deepcopy
 import requests
 import bittensor as bt
 
-from redteam_core import constants
 from redteam_core.config import ENV_PREFIX_SCORING_API
 from redteam_core.challenge_pool import ACTIVE_CHALLENGES
 from redteam_core.validator import (
@@ -26,6 +25,9 @@ from redteam_core.validator.utils import create_validator_request_header_fn
 from .cache import ScoringLRUCache
 from .router import start_ping_server
 from ._base import BaseScoringApi
+from dotenv import load_dotenv
+
+load_dotenv(".env", override=True)
 
 SCORING_API_PORT = int(os.getenv(f"{ENV_PREFIX_SCORING_API}PORT", 8000))
 
@@ -66,12 +68,9 @@ class ScoringApi(BaseScoringApi):
         super().__init__()
 
         # Override hotkey and uid from environment if provided
-        if (
-            self.scoring_api_config.HOTKEY_ADDRESS
-            and self.scoring_api_config.UID is not None
-        ):
-            self.hotkey = self.scoring_api_config.HOTKEY_ADDRESS
-            self.uid = self.scoring_api_config.UID
+
+        self.hotkey = self.wallet.hotkey.ss58_address
+        self.uid = self.scoring_api_config.UID
 
         # Setup scoring-specific components
         self.validator_request_header_fn = create_validator_request_header_fn(
@@ -90,7 +89,7 @@ class ScoringApi(BaseScoringApi):
         self.storage_manager = StorageManager(
             cache_dir=self.config.BITTENSOR.SUBNET.CACHE_DIR,
             validator_request_header_fn=self.validator_request_header_fn,
-            hf_repo_id=self.config.BITTENSOR.SUBNET.HF_REPO_ID,
+            hf_repo_id="",
             sync_on_init=True,
         )
 
@@ -116,7 +115,7 @@ class ScoringApi(BaseScoringApi):
         self._sync_scoring_results_from_storage_to_cache()
 
         bt.logging.info(
-            f"Scoring API constant values: {constants.model_dump_json(indent=2)}"
+            f"Scoring API constant values: {self.config.model_dump_json(indent=2)}"
         )
 
     def load_state(self, state: dict) -> None:
@@ -322,7 +321,7 @@ class ScoringApi(BaseScoringApi):
         """
         Retrieves the storage API key from the config.
         """
-        endpoint = f"{constants.STORAGE_API_URL}/get-api-key"
+        endpoint = f"{self.config.STORAGE_API_URL}/get-api-key"
         data = {"validator_uid": self.uid, "validator_hotkey": self.hotkey}
         header = self.validator_request_header_fn(data)
         response = requests.post(endpoint, json=data, headers=header)
@@ -564,7 +563,7 @@ class ScoringApi(BaseScoringApi):
                 exit()
 
             # Sleep until next weight update
-            time.sleep(constants.EPOCH_LENGTH)
+            time.sleep(self.config.EPOCH_LENGTH)
 
     # MARK: Commit Management
     def _update_validators_miner_commits(self):
@@ -582,7 +581,7 @@ class ScoringApi(BaseScoringApi):
         valid_validators = []
         for validator_uid, validator_ss58_address in enumerate(self.metagraph.hotkeys):
             stake = self.metagraph.S[validator_uid]
-            if stake >= constants.MIN_VALIDATOR_STAKE:
+            if stake >= self.config.MIN_VALIDATOR_STAKE:
                 valid_validators.append((validator_uid, validator_ss58_address))
 
         bt.logging.info(
@@ -595,7 +594,7 @@ class ScoringApi(BaseScoringApi):
         for validator_uid, validator_hotkey in valid_validators:
             # Skip if request fails
             try:
-                endpoint = f"{constants.STORAGE_API_URL}/fetch-latest-miner-commits"
+                endpoint = f"{self.config.STORAGE_API_URL}/fetch-latest-miner-commits"
                 data = {
                     "validator_uid": validator_uid,
                     "validator_hotkey": validator_hotkey,
@@ -778,7 +777,7 @@ class ScoringApi(BaseScoringApi):
         challenge_names = (
             [challenge_name] if challenge_name else list(self.scoring_results.keys())
         )
-        endpoint = f"{constants.STORAGE_API_URL}/upload-centralized-score"
+        endpoint = f"{self.config.STORAGE_API_URL}/upload-centralized-score"
 
         for challenge_name in challenge_names:
             scoring_results_to_send: list[dict] = []
@@ -850,7 +849,7 @@ class ScoringApi(BaseScoringApi):
                 # Request the most recent entries for this challenge
                 entries_per_challenge = 256  # Match the LRU cache size
 
-                endpoint = f"{constants.STORAGE_API_URL}/fetch-centralized-score"
+                endpoint = f"{self.config.STORAGE_API_URL}/fetch-centralized-score"
                 data = {
                     "challenge_names": [challenge_name],
                     "limit": entries_per_challenge,  # Get the most recent entries
@@ -974,4 +973,4 @@ if __name__ == "__main__":
     with ScoringApi() as app:
         while True:
             bt.logging.info("ScoringApi is running...")
-            time.sleep(constants.EPOCH_LENGTH // 4)
+            time.sleep(app.config.EPOCH_LENGTH // 4)
