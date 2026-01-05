@@ -52,14 +52,17 @@ class BaseScoringApi(ABC):
         self.metagraph = self.subtensor.metagraph(self.config.BITTENSOR.SUBNET_NETUID)
         bt.logging.info(f"Metagraph: {self.metagraph}")
 
-        if self.wallet.hotkey.ss58_address not in self.metagraph.hotkeys:
-            bt.logging.error(
-                f"\nYour validator: {self.wallet} is not registered to chain connection: {self.subtensor} \nRun 'btcli register' and try again."
-            )
-            exit()
-        else:
-            self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-            bt.logging.info(f"Running validator on uid: {self.uid}")
+        # if self.wallet.hotkey.ss58_address not in self.metagraph.hotkeys:
+        #     bt.logging.error(
+        #         f"\nYour validator: {self.wallet} is not registered to chain connection: {self.subtensor} \nRun 'btcli register' and try again."
+        #     )
+        #     exit()
+        # else:
+        #     self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+
+        self.hotkey = self.wallet.hotkey.ss58_address
+        self.uid = self.scoring_api_config.UID
+        bt.logging.info(f"Running validator on uid: {self.uid}")
 
     def run(self):
         bt.logging.info("Starting scoring API loop.")
@@ -125,7 +128,9 @@ class BaseScoringApi(ABC):
         # Set wallet configuration
         if bt_config.wallet is None:
             bt_config.wallet = bt.Config()
-        bt_config.wallet.path = os.getenv("RT_BTCLI_WALLET_DIR", "./wallets")
+        bt_config.wallet.path = os.getenv(
+            "RT_BTCLI_WALLET_DIR", self.scoring_api_config.WALLET_DIR
+        )
         bt_config.wallet.name = self.scoring_api_config.WALLET_NAME
         bt_config.wallet.hotkey = self.scoring_api_config.HOTKEY_NAME
 
