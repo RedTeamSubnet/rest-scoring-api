@@ -92,22 +92,20 @@ class ScoringApi(BaseScoringApi):
             hf_repo_id="",
             sync_on_init=True,
         )
-
-        # Initialize challenge managers
-        self.challenge_managers: dict[str, ChallengeManager] = {}
-        self.active_challenges: dict = {}
-        self._init_active_challenges()
-        self._init_scoring_api_state()
-
         # Initialize scoring API state
         self.validators_miner_commits: dict[
             tuple[int, str], dict[tuple[int, str], dict[str, MinerChallengeCommit]]
         ] = {}
         self.miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
         self.miner_commits_cache: dict[str, MinerChallengeCommit] = {}
+        # Initialize challenge managers
+        self.challenge_managers: dict[str, ChallengeManager] = {}
+        self.active_challenges: dict = {}
         self.scoring_results = ScoringLRUCache(
             challenges=list(self.active_challenges.keys()), maxsize_per_challenge=256
         )
+        self._init_active_challenges()
+        self._init_scoring_api_state()
 
         # Initialize cache for scoring results
         self._initialize_scoring_cache()
