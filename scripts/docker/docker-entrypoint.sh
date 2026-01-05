@@ -103,6 +103,8 @@ main()
 	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type f -exec sudo chmod 664 {} + || exit 2
 	find "${RT_SCORING_API_LOGS_DIR}" "${RT_SCORING_API_TMP_DIR}" -type d -exec sudo chmod +s {} + || exit 2
 
+	# echo "${USER} ALL=(ALL) ALL" | sudo tee -a "/etc/sudoers.d/${USER}" > /dev/null || exit 2
+
 	echo ""
 
 	## Parsing input:
