@@ -7,6 +7,9 @@ from copy import deepcopy
 
 import requests
 import bittensor as bt
+from dotenv import load_dotenv
+
+
 
 from redteam_core.config import ENV_PREFIX_SCORING_API
 from redteam_core.challenge_pool import ACTIVE_CHALLENGES
@@ -25,7 +28,6 @@ from redteam_core.validator.utils import create_validator_request_header_fn
 from .cache import ScoringLRUCache
 from .router import start_ping_server
 from ._base import BaseScoringApi
-from dotenv import load_dotenv
 
 load_dotenv(".env", override=True)
 
