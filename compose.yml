@@ -5,6 +5,7 @@ services:
       context: .
     restart: unless-stopped
     privileged: true
+    network_mode: host
     environment:
       TERM: ${TERM:-xterm}
       TZ: ${TZ:-UTC}
