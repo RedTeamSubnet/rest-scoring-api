@@ -10,7 +10,6 @@ import bittensor as bt
 from dotenv import load_dotenv
 
 
-
 from redteam_core.config import ENV_PREFIX_SCORING_API
 from redteam_core.challenge_pool import ACTIVE_CHALLENGES
 from redteam_core.validator import (
@@ -91,7 +90,6 @@ class ScoringApi(BaseScoringApi):
         self.storage_manager = StorageManager(
             cache_dir=self.scoring_api_config.CACHE_DIR,
             validator_request_header_fn=self.validator_request_header_fn,
-            hf_repo_id="",
             sync_on_init=True,
         )
         # Initialize scoring API state
@@ -465,6 +463,9 @@ class ScoringApi(BaseScoringApi):
 
         if not new_commits:
             # No new commits to score, skip
+            self.challenge_managers[challenge].update_miner_scores(
+                revealed_commits_list
+            )
             bt.logging.info(
                 f"[CENTRALIZED SCORING] No new commits to score for challenge: {challenge}, skipping"
             )
