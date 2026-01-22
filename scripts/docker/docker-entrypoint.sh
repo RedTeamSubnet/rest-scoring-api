@@ -44,7 +44,19 @@ _run()
 
 	sleep 5
 	echo "[INFO]: Starting ${RT_SCORING_API_SLUG}..."
-	exec sg docker "exec python -u -m api" || exit 2
+
+	_docker_group="dockerhost"
+	if [ -S "/var/run/docker.sock" ]; then
+		_docker_host_gid=$(stat -c %g /var/run/docker.sock) || exit 2
+		getent group "${_docker_host_gid}" || sudo groupadd -g "${_docker_host_gid}" ${_docker_group} || exit 2
+		sudo usermod -aG "${_docker_host_gid}" "${USER}" || exit 2
+	else
+		sudo service docker start || exit 2
+		sleep 2
+		_docker_group="docker"
+	fi
+	sg ${_docker_group} "id && docker info" || exit 2
+	exec sg ${_docker_group} "exec python -u -m api" || exit 2
 
 	exit 0
 }
