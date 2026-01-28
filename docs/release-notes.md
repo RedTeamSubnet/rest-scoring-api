@@ -6,6 +6,17 @@ hide:
 
 # 📌 Release Notes
 
+## v4.0.2-260128 (2026-01-28)
+
+<!-- Release notes generated using configuration in .github/release.yml at v4.0.2-260128 -->
+
+## What's Changed
+### 📦 Dependencies
+* deps: update redteam_core dependency and reorder CODEOWNERS by @bybatkhuu in https://github.com/RedTeamSubnet/rest-scoring-api/pull/2
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.0.1-260128...v4.0.2-260128
+
 ## v4.0.1-260128 (2026-01-28)
 
 <!-- Release notes generated using configuration in .github/release.yml at v4.0.1-260128 -->
