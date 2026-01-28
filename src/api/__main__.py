@@ -485,36 +485,6 @@ class ScoringApi(BaseScoringApi):
             f"[CENTRALIZED SCORING] Running controller for challenge: {challenge}"
         )
 
-        # 2. Gather comparison inputs
-        # Get unique commits for the challenge (the "encrypted_commit"s)
-        unique_commits = self.challenge_managers[challenge].get_unique_commits()
-        # Get unique solutions 's cache key
-        unique_commits_cache_keys = [
-            self.storage_manager.hash_cache_key(unique_commit)
-            for unique_commit in unique_commits
-        ]
-        # Get commit 's cached data from storage
-        unique_commits_cached_data: list[MinerChallengeCommit] = []
-        challenge_local_cache = self.storage_manager._get_cache(challenge)
-        if challenge_local_cache:
-            unique_commits_cached_data_raw = [
-                challenge_local_cache.get(unique_commit_cache_key)
-                for unique_commit_cache_key in unique_commits_cache_keys
-            ]
-
-            unique_commits_cached_data = []
-            for commit in unique_commits_cached_data_raw:
-                if not commit:
-                    continue
-                try:
-                    validated_commit = MinerChallengeCommit.model_validate(commit)
-                    unique_commits_cached_data.append(validated_commit)
-                except Exception:
-                    bt.logging.warning(
-                        f"[CENTRALIZED SCORING] Failed to validate cached commit {commit} for challenge {challenge}: {traceback.format_exc()}"
-                    )
-                    continue
-
         # 3. Run challenge controller
         bt.logging.info(
             f"[CENTRALIZED SCORING] Running controller for challenge: {challenge}"
@@ -522,13 +492,16 @@ class ScoringApi(BaseScoringApi):
         bt.logging.info(
             f"[CENTRALIZED SCORING] Going to score {len(_sorted_new_miner_commits)} commits for challenge: {challenge}"
         )
+        _accepted_commits = self._get_accepted_challenge_commits(
+            challenge_name=challenge
+        )
         # This challenge controll will run with new inputs and reference commit input
         # Reference commits are collected from yesterday, so if same docker_hub_id commited same day, they can share comparison_logs field, and of course, scoring_logs field
         # If same docker_hub_id commited different day, the later one expected to be ignored anyway
         controller = self.active_challenges[challenge]["controller"](
             challenge_name=challenge,
             miner_commits=_sorted_new_miner_commits,
-            reference_comparison_commits=unique_commits_cached_data,
+            reference_comparison_commits=_accepted_commits,
             challenge_info=self.active_challenges[challenge],
             seed_inputs=seed_inputs,
         )
@@ -834,6 +807,46 @@ class ScoringApi(BaseScoringApi):
                     bt.logging.error(
                         f"Failed to send scoring results to storage: {traceback.format_exc()}"
                     )
+
+    def _get_accepted_challenge_commits(self, challenge_name: str) -> list:
+        _payload = {"challenge_name": challenge_name}
+        _challenge_limit = (
+            self.active_challenges[challenge_name]
+            .get("comparison_config", {})
+            .get("max_unique_commits", None)
+        )
+        if _challenge_limit:
+            _payload["limit"] = _challenge_limit
+        header = self.validator_request_header_fn(_payload)
+
+        endpoint = f"{self.config.STORAGE_API_URL}/fetch-accepted-miner-commits"
+        commits = requests.post(endpoint, json=_payload, headers=header)
+        if commits.status_code == 200 and commits.json().get("miner_commits"):
+            commits = commits.json().get("miner_commits", [])
+            bt.logging.info(
+                f"Fetched {len(commits)} accepted challenge commits for {challenge_name}"
+            )
+            if not commits:
+                bt.logging.warning(
+                    f"No accepted challenge commits found for {challenge_name}"
+                )
+            _accepted_commits: list[MinerChallengeCommit] = []
+            for commit_data in commits:
+                try:
+                    commit = MinerChallengeCommit.model_validate(
+                        commit_data["commits"][0]
+                    )
+                    _accepted_commits.append(commit)
+                except Exception:
+                    bt.logging.error(
+                        f"Failed to validate accepted challenge commit: {traceback.format_exc()}"
+                    )
+            return _accepted_commits
+        else:
+            bt.logging.error(
+                f"Failed to fetch accepted challenge commits: {commits.status_code} - {commits.text}"
+            )
+            return []
 
     def _initialize_scoring_cache(self):
         """
