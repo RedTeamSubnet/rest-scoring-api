@@ -1,2 +1,1 @@
-# redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@v3.1.0
-redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@feat/config
+redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@v4.0.1
