@@ -843,7 +843,7 @@ class ScoringApi(BaseScoringApi):
                     )
             return _accepted_commits
         else:
-            bt.logging.error(
+            bt.logging.warning(
                 f"Failed to fetch accepted challenge commits: {commits.status_code} - {commits.text}"
             )
             return []
