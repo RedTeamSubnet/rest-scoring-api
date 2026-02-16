@@ -105,7 +105,7 @@ class LRUCache(Generic[KT, T]):
 # Define the specific type for scoring results
 if TYPE_CHECKING:
     ScoringResultType = dict[
-        str, Union[list[ScoringLog], dict[str, list[ComparisonLog]]]
+        str, Union[list[ScoringLog], dict[str, list[ComparisonLog]], float]
     ]
 else:
     ScoringResultType = dict[str, Any]

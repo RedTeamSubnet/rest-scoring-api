@@ -382,6 +382,7 @@ class ScoringApi(BaseScoringApi):
                         result={
                             "scoring_logs": commit.scoring_logs,
                             "comparison_logs": commit.comparison_logs,
+                            "scored_timestamp": commit.scored_timestamp,
                         },
                     )
 
@@ -449,6 +450,9 @@ class ScoringApi(BaseScoringApi):
                 )
                 commit.scoring_logs = cached_result["scoring_logs"]
                 commit.comparison_logs = cached_result["comparison_logs"]
+                # Restore scored_timestamp from cache to prevent data loss
+                if cached_result.get("scored_timestamp"):
+                    commit.scored_timestamp = cached_result["scored_timestamp"]
 
                 # Add input seed hash to set
                 for scoring_log in commit.scoring_logs:
@@ -716,6 +720,7 @@ class ScoringApi(BaseScoringApi):
                     new_commit.score = existing_commit.score
                     new_commit.penalty = existing_commit.penalty
                     new_commit.accepted = existing_commit.accepted
+                    new_commit.scored_timestamp = existing_commit.scored_timestamp
         self.miner_commits = new_miner_commits
 
         # Sort by UID to make sure all next operations are order consistent
@@ -775,6 +780,7 @@ class ScoringApi(BaseScoringApi):
                             "comparison_logs", {}
                         ).items()
                     },
+                    "scored_timestamp": result.get("scored_timestamp"),
                 }
                 scoring_results_to_send.append(scoring_result)
 
@@ -903,6 +909,7 @@ class ScoringApi(BaseScoringApi):
                                 "comparison_logs"
                             ].items()
                         },
+                        "scored_timestamp": result.get("scored_timestamp"),
                     }
 
                     # Store in our LRU cache
@@ -955,12 +962,13 @@ class ScoringApi(BaseScoringApi):
                     continue
 
                 # Found the commit in self.scoring_results, now we make sure cache have correct scoring_logs
+                has_changes = False
                 if not commit.scoring_logs:
                     # If not scoring_logs, we add the scoring_logs from self.scoring_results
                     commit.scoring_logs = memcache_[commit.docker_hub_id][
                         "scoring_logs"
                     ]
-                    diskcache_[hashed_cache_key] = commit.model_dump()
+                    has_changes = True
                 else:
                     # Check for each entries in scoring_logs for miner_input and miner_output, they should not be None
                     scoring_logs_with_none = []
@@ -976,7 +984,19 @@ class ScoringApi(BaseScoringApi):
                         commit.scoring_logs = memcache_[commit.docker_hub_id][
                             "scoring_logs"
                         ]
-                        diskcache_[hashed_cache_key] = commit.model_dump()
+                        has_changes = True
+
+                # Sync scored_timestamp from memory cache to disk cache if missing
+                if not commit.scored_timestamp and memcache_[commit.docker_hub_id].get(
+                    "scored_timestamp"
+                ):
+                    commit.scored_timestamp = memcache_[commit.docker_hub_id][
+                        "scored_timestamp"
+                    ]
+                    has_changes = True
+
+                if has_changes:
+                    diskcache_[hashed_cache_key] = commit.model_dump()
 
 
 if __name__ == "__main__":
