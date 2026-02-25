@@ -9,6 +9,8 @@ import requests
 import bittensor as bt
 from dotenv import load_dotenv
 
+load_dotenv(".env", override=True)
+
 
 from redteam_core.config import ENV_PREFIX_SCORING_API
 from redteam_core.challenge_pool import ACTIVE_CHALLENGES
@@ -28,7 +30,6 @@ from .cache import ScoringLRUCache
 from .router import start_ping_server
 from ._base import BaseScoringApi
 
-load_dotenv(".env", override=True)
 
 SCORING_API_PORT = int(os.getenv(f"{ENV_PREFIX_SCORING_API}PORT", 8000))
 
