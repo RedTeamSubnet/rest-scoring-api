@@ -1,6 +1,6 @@
 services:
   scoring-api:
-    image: redteamsubnet61/rest-scoring-api:4.0.5-260226
+    image: redteamsubnet61/rest-scoring-api:4.0.6-260304
     build:
       context: .
     restart: unless-stopped
