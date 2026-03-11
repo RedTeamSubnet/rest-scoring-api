@@ -98,7 +98,6 @@ class ScoringApi(BaseScoringApi):
             tuple[int, str], dict[tuple[int, str], dict[str, MinerChallengeCommit]]
         ] = {}
         self.miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
-        self.miner_commits_cache: dict[str, MinerChallengeCommit] = {}
         # Initialize challenge managers
         self.challenge_managers: dict[str, ChallengeManager] = {}
         self.active_challenges: dict = {}
@@ -588,6 +587,7 @@ class ScoringApi(BaseScoringApi):
 
         # Initialize/clear validators_miner_commits for this round
         self.validators_miner_commits = {}
+        self.miner_commits_cache: dict[str, MinerChallengeCommit] = {}
 
         for validator_uid, validator_hotkey in valid_validators:
             # Skip if request fails
