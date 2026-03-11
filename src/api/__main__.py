@@ -701,7 +701,7 @@ class ScoringApi(BaseScoringApi):
            - For different encrypted_commit:
              * Keep newer one based on timestamp
         3. Merge scoring data from existing state for unchanged commits
-        4. Update self.miner_commits_cache for quick lookups
+        4. Sort and store self.miner_commits by miner uid and hotkey for deterministic ordering
         """
         new_miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
 
