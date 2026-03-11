@@ -98,7 +98,6 @@ class ScoringApi(BaseScoringApi):
             tuple[int, str], dict[tuple[int, str], dict[str, MinerChallengeCommit]]
         ] = {}
         self.miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
-        self.miner_commits_cache: dict[str, MinerChallengeCommit] = {}
         # Initialize challenge managers
         self.challenge_managers: dict[str, ChallengeManager] = {}
         self.active_challenges: dict = {}
@@ -200,18 +199,38 @@ class ScoringApi(BaseScoringApi):
         """
         Collects all revealed commits from miners.
         Filters unique docker_hub_ids in one pass and excludes previously scored submissions.
+        Returns up to 2 commits per miner/challenge from the cache.
 
         Returns:
             A dictionary where the key is the challenge name and the value is a list of MinerChallengeCommit.
         """
         seen_docker_hub_ids: set[str] = set()
 
+        miner_challenge_commits: dict[
+            tuple[int, str, str], list[MinerChallengeCommit]
+        ] = {}
+
+        for commit in self.miner_commits_cache.values():
+            key = (commit.miner_uid, commit.miner_hotkey, commit.challenge_name)
+            if key not in miner_challenge_commits:
+                miner_challenge_commits[key] = []
+            miner_challenge_commits[key].append(commit)
+
+        for key in miner_challenge_commits:
+            miner_challenge_commits[key].sort(
+                key=lambda x: (
+                    x.commit_timestamp if x.commit_timestamp else float("inf")
+                ),
+                reverse=True,
+            )
+            miner_challenge_commits[key] = miner_challenge_commits[key][:2]
+
         revealed_commits: dict[str, list[MinerChallengeCommit]] = {}
         _list_existing_commits = []
         _list_revealed_commits = []
         _list_skipped_commits = []
-        for (uid, hotkey), commits in self.miner_commits.items():
-            for challenge_name, commit in commits.items():
+        for (uid, hotkey, challenge_name), commits in miner_challenge_commits.items():
+            for commit in commits:
                 bt.logging.info(
                     f"[GET REVEALED COMMITS] Try to reveal commit: {uid} - {hotkey} - {challenge_name} - {commit.encrypted_commit}"
                 )
@@ -266,7 +285,6 @@ class ScoringApi(BaseScoringApi):
         """
         if not miner_commits:
             miner_commits = {}
-            # Default to store all miner commits
             bt.logging.info(
                 "[STORE MINER COMMMITS] Storing all commits in self.miner_commits"
             )
@@ -569,6 +587,7 @@ class ScoringApi(BaseScoringApi):
 
         # Initialize/clear validators_miner_commits for this round
         self.validators_miner_commits = {}
+        self.miner_commits_cache: dict[str, MinerChallengeCommit] = {}
 
         for validator_uid, validator_hotkey in valid_validators:
             # Skip if request fails
@@ -595,11 +614,61 @@ class ScoringApi(BaseScoringApi):
                         continue
 
                     for challenge_name, miner_commit in miner_commits.items():
-                        miner_commit = MinerChallengeCommit.model_validate(miner_commit)
+                        if isinstance(miner_commit, list):
+                            miner_commit_objs = []
+                            for commit_data in miner_commit:
+                                miner_commit_obj = MinerChallengeCommit.model_validate(
+                                    commit_data
+                                )
+                                miner_commit_objs.append(miner_commit_obj)
+                                cache_key = f"{miner_commit_obj.challenge_name}---{miner_commit_obj.encrypted_commit}"
+                                if cache_key not in self.miner_commits_cache:
+                                    self.miner_commits_cache[cache_key] = (
+                                        miner_commit_obj
+                                    )
+                                else:
+                                    existing = self.miner_commits_cache[cache_key]
+                                    if (
+                                        miner_commit_obj.commit_timestamp
+                                        and existing.commit_timestamp
+                                        and miner_commit_obj.commit_timestamp
+                                        < existing.commit_timestamp
+                                    ):
+                                        self.miner_commits_cache[cache_key] = (
+                                            miner_commit_obj
+                                        )
 
-                        this_validator_miner_commits.setdefault(
-                            (miner_commit.miner_uid, miner_commit.miner_hotkey), {}
-                        )[miner_commit.challenge_name] = miner_commit
+                            if miner_commit_objs:
+                                latest_commit = max(
+                                    miner_commit_objs,
+                                    key=lambda x: (
+                                        x.commit_timestamp
+                                        if x.commit_timestamp
+                                        else float("-inf")
+                                    ),
+                                )
+                                miner_key = (
+                                    latest_commit.miner_uid,
+                                    latest_commit.miner_hotkey,
+                                )
+                                this_validator_miner_commits.setdefault(miner_key, {})[
+                                    challenge_name
+                                ] = latest_commit
+                        else:
+                            miner_commit_obj = MinerChallengeCommit.model_validate(
+                                miner_commit
+                            )
+                            this_validator_miner_commits.setdefault(
+                                (
+                                    miner_commit_obj.miner_uid,
+                                    miner_commit_obj.miner_hotkey,
+                                ),
+                                {},
+                            )[miner_commit_obj.challenge_name] = miner_commit_obj
+
+                            cache_key = f"{miner_commit_obj.challenge_name}---{miner_commit_obj.encrypted_commit}"
+                            if cache_key not in self.miner_commits_cache:
+                                self.miner_commits_cache[cache_key] = miner_commit_obj
 
                 self.validators_miner_commits[(validator_uid, validator_hotkey)] = (
                     this_validator_miner_commits
@@ -632,12 +701,10 @@ class ScoringApi(BaseScoringApi):
            - For different encrypted_commit:
              * Keep newer one based on timestamp
         3. Merge scoring data from existing state for unchanged commits
-        4. Update self.miner_commits_cache for quick lookups
+        4. Sort and store self.miner_commits by miner uid and hotkey for deterministic ordering
         """
-        # Create new miner commits dict for aggregation
         new_miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
 
-        # Aggregate commits from all validators
         for _, miner_commits_from_validator in self.validators_miner_commits.items():
             for (
                 miner_uid,
@@ -647,16 +714,13 @@ class ScoringApi(BaseScoringApi):
                     miner_uid < len(self.metagraph.hotkeys)
                     and miner_hotkey == self.metagraph.hotkeys[miner_uid]
                 ):
-                    # Skip if miner hotkey is not in metagraph
                     continue
 
                 miner_key = (miner_uid, miner_hotkey)
 
-                # Initialize if first time seeing this miner
                 if miner_key not in new_miner_commits:
                     new_miner_commits[miner_key] = miner_commits_in_challenges
                 else:
-                    # Update miner commits
                     for (
                         challenge_name,
                         miner_commit,
@@ -671,40 +735,32 @@ class ScoringApi(BaseScoringApi):
                                 miner_commit.encrypted_commit
                                 == current_miner_commit.encrypted_commit
                             ):
-                                # If encrypted commit is the same, we update to older commit timestamp and add unknown commit and key field if possible
                                 if (
                                     miner_commit.commit_timestamp
                                     and current_miner_commit.commit_timestamp
                                     and miner_commit.commit_timestamp
                                     < current_miner_commit.commit_timestamp
                                 ):
-                                    # Update to older commit timestamp
                                     current_miner_commit.commit_timestamp = (
                                         miner_commit.commit_timestamp
                                     )
                                 if not current_miner_commit.key:
-                                    # Add unknown key if possible
                                     current_miner_commit.key = miner_commit.key
                                 if not current_miner_commit.commit:
-                                    # Add unknown commit if possible
                                     current_miner_commit.commit = miner_commit.commit
                             else:
-                                # If encrypted commit is different, we compare commit timestamp
                                 if (
                                     miner_commit.commit_timestamp
                                     and current_miner_commit.commit_timestamp
                                     and miner_commit.commit_timestamp
                                     > current_miner_commit.commit_timestamp
                                 ):
-                                    # If newer commit timestamp, update to the latest commit
-                                    current_miner_commit.commit_timestamp = (
-                                        miner_commit.commit_timestamp
-                                    )
+                                    new_miner_commits[miner_key][
+                                        challenge_name
+                                    ] = miner_commit
                                 else:
-                                    # If older commit timestamp, skip
                                     continue
 
-        # Merge scoring data from existing state
         for miner_key, existing_challenges in self.miner_commits.items():
             if miner_key not in new_miner_commits:
                 continue
@@ -714,7 +770,6 @@ class ScoringApi(BaseScoringApi):
                     continue
 
                 new_commit = new_miner_commits[miner_key][challenge_name]
-                # If same encrypted commit, preserve stateful fields
                 if existing_commit.encrypted_commit == new_commit.encrypted_commit:
                     new_commit.scoring_logs = existing_commit.scoring_logs
                     new_commit.comparison_logs = existing_commit.comparison_logs
@@ -724,19 +779,11 @@ class ScoringApi(BaseScoringApi):
                     new_commit.scored_timestamp = existing_commit.scored_timestamp
         self.miner_commits = new_miner_commits
 
-        # Sort by UID to make sure all next operations are order consistent
         self.miner_commits = {
             (uid, ss58_address): commits
             for (uid, ss58_address), commits in sorted(
                 self.miner_commits.items(), key=lambda item: item[0]
             )
-        }
-
-        # Update miner commits cache
-        self.miner_commits_cache = {
-            f"{commit.challenge_name}---{commit.encrypted_commit}": commit
-            for _, commits in self.miner_commits.items()
-            for commit in commits.values()
         }
 
     # MARK: Storage
