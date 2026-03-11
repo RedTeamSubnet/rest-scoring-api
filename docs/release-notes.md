@@ -6,6 +6,19 @@ hide:
 
 # 📌 Release Notes
 
+## v4.1.0-260311 (2026-03-11)
+
+<!-- Release notes generated using configuration in .github/release.yml at v4.1.0-260311 -->
+
+## What's Changed
+### ✨ Features
+* Enhancement in revealed commits retrieval and storage logic by @aliyuldashev in https://github.com/RedTeamSubnet/rest-scoring-api/pull/3
+
+## New Contributors
+* @aliyuldashev made their first contribution in https://github.com/RedTeamSubnet/rest-scoring-api/pull/3
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.0.7-260304...v4.1.0-260311
+
 ## v4.0.7-260304 (2026-03-04)
 
 <!-- Release notes generated using configuration in .github/release.yml at v4.0.7-260304 -->
