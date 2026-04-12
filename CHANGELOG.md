@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.1.2-260412 (2026-04-12)
+
+<!-- Release notes generated using configuration in .github/release.yml at v4.1.2-260412 -->
+
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.1.1-260311...v4.1.2-260412
+
 ## v4.1.1-260311 (2026-03-11)
 
 <!-- Release notes generated using configuration in .github/release.yml at v4.1.1-260311 -->
