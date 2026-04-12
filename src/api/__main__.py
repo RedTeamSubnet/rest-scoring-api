@@ -864,13 +864,6 @@ class ScoringApi(BaseScoringApi):
 
     def _get_accepted_challenge_commits(self, challenge_name: str) -> list:
         _payload = {"challenge_name": challenge_name}
-        _challenge_limit = (
-            self.active_challenges[challenge_name]
-            .get("comparison_config", {})
-            .get("max_unique_commits", None)
-        )
-        if _challenge_limit:
-            _payload["limit"] = _challenge_limit
         header = self.validator_request_header_fn(_payload)
 
         endpoint = f"{self.config.STORAGE_API_URL}/fetch-accepted-miner-commits"
