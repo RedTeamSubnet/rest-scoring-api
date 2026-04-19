@@ -142,9 +142,51 @@ class ScoringApi(BaseScoringApi):
                         (miner_state.miner_uid, miner_state.miner_hotkey), {}
                     )[challenge_name] = miner_state.latest_commit
 
+    def _fetch_miners_docker_info_from_storage(self) -> dict[str, dict]:
+        """
+        Fetch miners docker info (PAT and docker_username) from storage.
+
+        Returns:
+            dict: Dictionary mapping miner_hotkey to {"personal_access_token": str, "dockerhub_username": str}
+        """
+        bt.logging.info(
+            "[FETCH MINER DOCKER INFO] Fetching miner docker info from storage"
+        )
+
+        endpoint = f"{self.config.STORAGE_API_URL}/miner/docker-info"
+        header = self.validator_request_header_fn({})
+
+        try:
+            response = requests.get(endpoint, headers=header)
+            response.raise_for_status()
+            data = response.json()
+
+            miners_docker_info = {}
+            for miner_uid, doc in data.get("data", {}).items():
+                if miner_uid:
+                    miners_docker_info[miner_uid] = {
+                        "dockerhub_username": doc.get("dockerhub_username"),
+                        "last_updated": doc.get("last_updated"),
+                        "personal_access_token": doc.get("personal_access_token"),
+                    }
+
+            bt.logging.success(
+                f"[FETCH MINER DOCKER INFO] Fetched docker info for {len(miners_docker_info)} miners"
+            )
+            return miners_docker_info
+
+        except Exception as e:
+            bt.logging.error(
+                f"[FETCH MINER DOCKER INFO] Failed to fetch miner docker info: {traceback.format_exc()}"
+            )
+            return {}
+
     def _init_scoring_api_state(self):
 
         bt.logging.info("[INIT] Starting scoring api's  state initialization...")
+
+        # Fetch miner docker info from storage
+        self.miners_docker_info = self._fetch_miners_docker_info_from_storage()
 
         state = None
         state = self.storage_manager.get_latest_validator_state_from_storage(
@@ -523,6 +565,7 @@ class ScoringApi(BaseScoringApi):
         # If same docker_hub_id commited different day, the later one expected to be ignored anyway
         controller = self.active_challenges[challenge]["controller"](
             challenge_name=challenge,
+            miners_docker_info=self.miners_docker_info,
             miner_commits=_sorted_new_miner_commits,
             reference_comparison_commits=_accepted_commits,
             challenge_info=self.active_challenges[challenge],
