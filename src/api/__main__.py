@@ -185,9 +185,6 @@ class ScoringApi(BaseScoringApi):
 
         bt.logging.info("[INIT] Starting scoring api's  state initialization...")
 
-        # Fetch miner docker info from storage
-        self.miners_docker_info = self._fetch_miners_docker_info_from_storage()
-
         state = None
         state = self.storage_manager.get_latest_validator_state_from_storage(
             validator_uid=self.uid,
@@ -557,6 +554,7 @@ class ScoringApi(BaseScoringApi):
         bt.logging.info(
             f"[CENTRALIZED SCORING] Going to score {len(_sorted_new_miner_commits)} commits for challenge: {challenge}"
         )
+        self.miners_docker_info = self._fetch_miners_docker_info_from_storage()
         _accepted_commits = self._get_accepted_challenge_commits(
             challenge_name=challenge
         )
