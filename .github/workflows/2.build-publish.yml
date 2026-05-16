@@ -9,7 +9,7 @@ on:
       - main
   push:
     tags:
-      - "v*.*.*-*"
+      - "*.*.*-*"
 
 env:
   _VERSION: 0.0.0-250101

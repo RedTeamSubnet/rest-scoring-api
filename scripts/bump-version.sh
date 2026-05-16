@@ -121,11 +121,11 @@ main()
 	local _new_version=${_current_version}
 	# Determine the new version based on the type of bump:
 	if [ "${_BUMP_TYPE}" == "major" ]; then
-		_new_version="$((_major + 1)).0.0-$(date -u '+%y%m%d')"
+		_new_version="$((_major + 1)).0.0-$(date -u '+%Y-%m-%d')"
 	elif [ "${_BUMP_TYPE}" == "minor" ]; then
-		_new_version="${_major}.$((_minor + 1)).0-$(date -u '+%y%m%d')"
+		_new_version="${_major}.$((_minor + 1)).0-$(date -u '+%Y-%m-%d')"
 	elif [ "${_BUMP_TYPE}" == "patch" ]; then
-		_new_version="${_major}.${_minor}.$((_patch + 1))-$(date -u '+%y%m%d')"
+		_new_version="${_major}.${_minor}.$((_patch + 1))-$(date -u '+%Y-%m-%d')"
 	fi
 
 	echo "[INFO]: Bumping version to '${_new_version}'..."
@@ -136,29 +136,29 @@ main()
 	./scripts/sync-versions.sh -a || exit 2
 
 	if [ "${_IS_COMMIT}" == true ]; then
-		echo "[INFO]: Committing bump version 'v${_new_version}'..."
+		echo "[INFO]: Committing bump version '${_new_version}'..."
 		# Commit the updated version file:
 		git add "${VERSION_FILE_PATH}" || exit 2
 		git commit -m "version: bump version to '${_new_version}'." || exit 2
 		echo "[OK]: Done."
 
 		if [ "${_IS_TAG}" == true ]; then
-			echo "[INFO]: Tagging 'v${_new_version}'..."
-			if git rev-parse "v${_new_version}" > /dev/null 2>&1; then
-				echo "[ERROR]: 'v${_new_version}' tag is already exists!" >&2
+			echo "[INFO]: Tagging '${_new_version}'..."
+			if git rev-parse "${_new_version}" > /dev/null 2>&1; then
+				echo "[ERROR]: '${_new_version}' tag is already exists!" >&2
 				exit 1
 			fi
-			git tag "v${_new_version}" || exit 2
+			git tag "${_new_version}" || exit 2
 			echo "[OK]: Done."
 		fi
 
 		if [ "${_IS_PUSH}" == true ]; then
-			echo "[INFO]: Pushing 'v${_new_version}'..."
+			echo "[INFO]: Pushing '${_new_version}'..."
 			git push || exit 2
 
 			if [ "${_IS_TAG}" == true ]; then
 				# shellcheck disable=SC1083
-				git push "$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} | sed 's/\/.*//')" "v${_new_version}" || exit 2
+				git push "$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} | sed 's/\/.*//')" "${_new_version}" || exit 2
 			fi
 			echo "[OK]: Done."
 		fi
