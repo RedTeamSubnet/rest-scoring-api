@@ -1,4 +1,4 @@
-# services:
+services:
 #   scoring-api:
 #     volumes:
 #       - "./volumes/.vscode-server:/home/rt-user/.vscode-server"
@@ -16,3 +16,13 @@
 #       interval: 5m
 #       timeout: 5s
 #       retries: 3
+
+  fluent-bit:
+    image: cr.fluentbit.io/fluent/fluent-bit:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - "./volumes/configs/fluent-bit:/fluent-bit/etc:ro"
+      - "./volumes/storage/rest-scoring-api/log:/var/log/rest-scoring-api:ro"
+    command: /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf
+    tty: true
