@@ -30,7 +30,6 @@ from .cache import ScoringLRUCache
 from .router import start_ping_server
 from ._base import BaseScoringApi
 
-
 SCORING_API_PORT = int(os.getenv(f"{ENV_PREFIX_SCORING_API}PORT", 8000))
 
 
@@ -153,7 +152,8 @@ class ScoringApi(BaseScoringApi):
             "[FETCH MINER DOCKER INFO] Fetching miner docker info from storage"
         )
 
-        endpoint = f"{self.config.STORAGE_API_URL}/miner/docker-info"
+        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
+        endpoint = f"{storage_url}/miner/docker-info"
         header = self.validator_request_header_fn({})
 
         try:
@@ -377,7 +377,8 @@ class ScoringApi(BaseScoringApi):
         """
         Retrieves the storage API key from the config.
         """
-        endpoint = f"{self.config.STORAGE_API_URL}/get-api-key"
+        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
+        endpoint = f"{storage_url}/get-api-key"
         data = {"validator_uid": self.uid, "validator_hotkey": self.hotkey}
         header = self.validator_request_header_fn(data)
         response = requests.post(endpoint, json=data, headers=header)
@@ -633,7 +634,8 @@ class ScoringApi(BaseScoringApi):
         for validator_uid, validator_hotkey in valid_validators:
             # Skip if request fails
             try:
-                endpoint = f"{self.config.STORAGE_API_URL}/fetch-latest-miner-commits"
+                storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
+                endpoint = f"{storage_url}/fetch-latest-miner-commits"
                 data = {
                     "validator_uid": validator_uid,
                     "validator_hotkey": validator_hotkey,
@@ -845,7 +847,8 @@ class ScoringApi(BaseScoringApi):
         challenge_names = (
             [challenge_name] if challenge_name else list(self.scoring_results.keys())
         )
-        endpoint = f"{self.config.STORAGE_API_URL}/upload-centralized-score"
+        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
+        endpoint = f"{storage_url}/upload-centralized-score"
 
         for challenge_name in challenge_names:
             scoring_results_to_send: list[dict] = []
@@ -907,7 +910,8 @@ class ScoringApi(BaseScoringApi):
         _payload = {"challenge_name": challenge_name}
         header = self.validator_request_header_fn(_payload)
 
-        endpoint = f"{self.config.STORAGE_API_URL}/fetch-accepted-miner-commits"
+        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
+        endpoint = f"{storage_url}/fetch-accepted-miner-commits"
         commits = requests.post(endpoint, json=_payload, headers=header)
         if commits.status_code == 200 and commits.json().get("miner_commits"):
             commits = commits.json().get("miner_commits", [])
@@ -951,7 +955,8 @@ class ScoringApi(BaseScoringApi):
                 # Request the most recent entries for this challenge
                 entries_per_challenge = 256  # Match the LRU cache size
 
-                endpoint = f"{self.config.STORAGE_API_URL}/fetch-centralized-score"
+                storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
+                endpoint = f"{storage_url}/fetch-centralized-score"
                 data = {
                     "challenge_names": [challenge_name],
                     "limit": entries_per_challenge,  # Get the most recent entries
