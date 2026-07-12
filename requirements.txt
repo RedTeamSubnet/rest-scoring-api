@@ -1,1 +1,2 @@
 redteam_core @ git+https://github.com/RedTeamSubnet/RedTeam.git@4.7.3
+async-substrate-interface~=1.6.4
