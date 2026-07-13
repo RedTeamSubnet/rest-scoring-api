@@ -1,6 +1,4 @@
-import os
-from typing_extensions import Optional, Self
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
 from redteam_core.config import BaseConfig, ENV_PREFIX_SCORING_API
@@ -24,19 +22,20 @@ class ScoringApiMainConfig(BaseConfig):
         default=-1,
         description="UID of the validator (overrides automatic detection if set)",
     )
-    CACHE_DIR: str = Field(
-        default="/var/lib/rest-scoring-api/cache", description="Cache directory path"
+    PORT: int = Field(default=8000, description="Port for the scoring API ping server")
+    BATCH_LIMIT: int = Field(
+        default=50,
+        description="Maximum number of unscored commits to fetch per forward pass",
+    )
+    STORAGE_API_PREFIX: str = Field(
+        default="/api/v1",
+        description="Path prefix for storage API endpoints",
+    )
+    BASELINE_COMMIT_ID: str = Field(
+        default="synthetic-baseline-aded41464b53d08fdadd4790dc9c8562133a6bbac4566e07fe8336b0ed67e8bc",
+        description="Commit id used as the baseline comparison target",
     )
     model_config = SettingsConfigDict(env_prefix=ENV_PREFIX_SCORING_API)
-
-    @model_validator(mode="after")
-    def validate_cache_dir(self) -> Self:
-        """Ensure cache directory exists and is writable."""
-        expanded = os.path.expanduser(self.CACHE_DIR)
-        os.makedirs(expanded, exist_ok=True)
-        if not os.access(expanded, os.W_OK):
-            raise ValueError(f"Cache directory not writable: {expanded}")
-        return self
 
 
 __all__ = ["ScoringApiMainConfig"]

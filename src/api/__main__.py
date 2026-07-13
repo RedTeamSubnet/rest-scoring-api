@@ -1,593 +1,578 @@
-import os
-import time
 import datetime
+import json
 import threading
+import time
 import traceback
 from copy import deepcopy
+from typing import Any
 
-import requests
 import bittensor as bt
+import requests
 from dotenv import load_dotenv
 
 load_dotenv(".env", override=True)
 
-
-from redteam_core.config import ENV_PREFIX_SCORING_API
 from redteam_core.challenge_pool import ACTIVE_CHALLENGES
-from redteam_core.validator import (
-    ChallengeManager,
-    StorageManager,
-    start_bittensor_log_listener,
-)
+from redteam_core.validator import start_bittensor_log_listener
 from redteam_core.validator.models import (
-    ComparisonLog,
     MinerChallengeCommit,
     ScoringLog,
 )
 from redteam_core.validator.utils import create_validator_request_header_fn
 
-from .cache import ScoringLRUCache
-from .router import start_ping_server
 from ._base import BaseScoringApi
+from .config import ScoringApiMainConfig
+from .router import start_ping_server
 
-SCORING_API_PORT = int(os.getenv(f"{ENV_PREFIX_SCORING_API}PORT", 8000))
+
+def _join_url(base: str, *parts: str) -> str:
+    value = base.rstrip("/")
+    for part in parts:
+        if part:
+            value = f"{value}/{part.strip('/')}"
+    return value
+
+
+class ScoringStorageClient:
+    """Thin client for storage endpoints used by the stateless scorer."""
+
+    def __init__(self, storage_url: str, header_fn, api_prefix: str):
+        self.storage_url = storage_url.rstrip("/")
+        self.header_fn = header_fn
+        self.api_prefix = api_prefix.strip("/")
+
+    def _headers(self, payload: Any) -> dict:
+        return self.header_fn(payload)
+
+    def _url(self, path: str) -> str:
+        return _join_url(self.storage_url, self.api_prefix, path)
+
+    def fetch_work_items(self, challenge_name: str | None, limit: int) -> list[dict]:
+        params: dict[str, Any] = {"limit": limit}
+        if challenge_name:
+            params["challenge_name"] = challenge_name
+        response = requests.get(
+            self._url("/scoring/work-items"),
+            params=params,
+            headers=self._headers(params),
+            timeout=120,
+        )
+        response.raise_for_status()
+        return response.json().get("data", [])
+
+    def fetch_docker_credentials(
+        self, miner_ids: list[str], hotkey_addresses: list[str]
+    ) -> list[dict]:
+        payload = {
+            "miner_ids": sorted(set(miner_ids)),
+            "hotkey_addresses": sorted(set(hotkey_addresses)),
+        }
+        response = requests.post(
+            self._url("/scoring/docker-credentials"),
+            json=payload,
+            headers=self._headers(payload),
+            timeout=120,
+        )
+        response.raise_for_status()
+        return response.json().get("data", [])
+
+    def fetch_accepted_reference_commits(
+        self, challenge_name: str, limit: int
+    ) -> list[dict]:
+        params = {"challenge_name": challenge_name, "limit": limit}
+        response = requests.get(
+            self._url("/scoring/accepted-reference-commits"),
+            params=params,
+            headers=self._headers(params),
+            timeout=180,
+        )
+        response.raise_for_status()
+        return response.json().get("data", [])
+
+    def fetch_commit(self, commit_id: str) -> dict | None:
+        response = requests.get(
+            self._url(f"/commits/{commit_id}"),
+            headers=self._headers({"commit_id": commit_id}),
+            timeout=60,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json().get("data")
+
+    def upload_results(self, results: list[dict]) -> list[dict]:
+        if not results:
+            return []
+        payload = {"results": results}
+        response = requests.post(
+            self._url("/scoring/results"),
+            json=payload,
+            headers=self._headers(payload),
+            timeout=180,
+        )
+        response.raise_for_status()
+        return response.json().get("data", [])
+
+
+def _as_timestamp(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    if isinstance(value, datetime.datetime):
+        return value.timestamp()
+    return None
+
+
+def _utc_iso(timestamp: float | None = None) -> str:
+    if timestamp is None:
+        dt = datetime.datetime.now(datetime.timezone.utc)
+    else:
+        dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
+    return dt.isoformat()
+
+
+def _docker_hub_id_from_plain_commit(challenge_name: str, plain_commit: str) -> str:
+    prefix = f"{challenge_name}---"
+    if plain_commit.startswith(prefix):
+        return plain_commit[len(prefix) :]
+    if "---" in plain_commit:
+        return plain_commit.split("---", 1)[1]
+    return plain_commit
+
+
+def _json_loads_maybe(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+
+def _extract_commit_files(payload: dict) -> tuple[list[dict], dict | None]:
+    """Return replayable commit_files and optional telemetry from storage payload."""
+    for output in payload.get("commit_outputs") or []:
+        data = _json_loads_maybe(output.get("data"))
+        if isinstance(data, dict) and isinstance(data.get("commit_files"), list):
+            return data["commit_files"], data.get("telemetry")
+        if isinstance(data, list):
+            return data, None
+
+    commit_files = []
+    for file_data in payload.get("commit_files") or []:
+        data = _json_loads_maybe(file_data.get("data"))
+        if isinstance(data, dict) and isinstance(data.get("commit_files"), list):
+            return data["commit_files"], data.get("telemetry")
+        if isinstance(data, list):
+            return data, None
+        content = data if isinstance(data, str) else file_data.get("content")
+        filename = (
+            file_data.get("file_name")
+            or file_data.get("orig_filename")
+            or file_data.get("filename")
+        )
+        if filename and content is not None:
+            commit_files.append({"file_name": filename, "content": content})
+    return commit_files, None
 
 
 class ScoringApi(BaseScoringApi):
     """
-    A centralized scoring service for the RedTeam network.
+    Stateless centralized scoring service.
 
-    This service is responsible for:
-    1. Aggregating miner commits from all validators
-    2. Scoring miner submissions using challenge controllers
-    3. Storing and caching scoring results
-    4. Publishing scoring results for validator consumption
-
-    Unlike Validator, ScoringApi:
-    - Does NOT query miners directly
-    - Does NOT set weights on-chain
-    - Only performs centralized scoring and comparison
-    - Maintains its own scoring cache and state
+    The storage API owns commit aggregation, reveal/decrypt state, deduplication, and
+    scored/unscored filtering. This process fetches work, runs challenge controllers,
+    uploads final results, and does not persist local scoring state.
     """
 
     def __init__(self):
-        """
-        Initialize the scoring API as a centralized scoring service.
-
-        Args:
-            config (bt.Config): Bittensor configuration object
-
-        State Management:
-            - validators_miner_commits: Stores current miner commits from all validators
-            - miner_commits: Aggregated miner commits from all validators
-            - miner_commits_cache: Quick lookup cache mapping challenge_name---encrypted_commit to commit
-            - scoring_results: Cache for scored docker_hub_ids with their scoring and comparison logs
-            - challenge_managers: Per-challenge scoring logic
-            - storage_manager: Persistent storage manager
-            - active_challenges: Dictionary of active challenges with controllers
-        """
         super().__init__()
-
-        # Override hotkey and uid from environment if provided
 
         self.hotkey = self.wallet.hotkey.ss58_address
         self.uid = self.scoring_api_config.UID
-
-        # Setup scoring-specific components
         self.validator_request_header_fn = create_validator_request_header_fn(
             validator_uid=self.uid,
             validator_hotkey=self.wallet.hotkey.ss58_address,
             keypair=self.wallet.hotkey,
         )
 
-        # Get the storage API key
         storage_api_key = self._get_storage_api_key()
+        if storage_api_key:
+            start_bittensor_log_listener(api_key=storage_api_key)
+        else:
+            bt.logging.warning(
+                "[INIT] Storage API key unavailable; centralized log listener disabled"
+            )
 
-        # Start the Bittensor log listener
-        start_bittensor_log_listener(api_key=storage_api_key)
-
-        # Setup storage manager
-        self.storage_manager = StorageManager(
-            cache_dir=self.scoring_api_config.CACHE_DIR,
-            validator_request_header_fn=self.validator_request_header_fn,
-            sync_on_init=True,
+        self.storage = ScoringStorageClient(
+            storage_url=str(self.config.STORAGE_API_URL),
+            header_fn=self.validator_request_header_fn,
+            api_prefix=self.scoring_api_config.STORAGE_API_PREFIX,
         )
-        # Initialize scoring API state
-        self.validators_miner_commits: dict[
-            tuple[int, str], dict[tuple[int, str], dict[str, MinerChallengeCommit]]
-        ] = {}
-        self.miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
-        # Initialize challenge managers
-        self.challenge_managers: dict[str, ChallengeManager] = {}
         self.active_challenges: dict = {}
-        self.scoring_results = ScoringLRUCache(
-            challenges=list(self.active_challenges.keys()), maxsize_per_challenge=256
-        )
+        self._baseline_commit_id: str | None = None
         self._init_active_challenges()
-        self._init_scoring_api_state()
-
-        # Initialize cache for scoring results
-        self._initialize_scoring_cache()
-        # Sync the cache from scoring results retrieved from storage upon initialization
-        self._sync_scoring_results_from_storage_to_cache()
 
         bt.logging.info(
             f"Scoring API constant values: {self.config.model_dump_json(indent=2)}"
         )
 
-    def load_state(self, state: dict) -> None:
-        # Load scoring dates
-        self.scoring_dates = state.get("scoring_dates", [])
-
-        # Load challenge managers state using their load_state class method
-        for challenge_name, manager_state in state.get(
-            "challenge_managers", {}
-        ).items():
-            if challenge_name in self.challenge_managers:
-                # Create new challenge manager with loaded state
-                loaded_manager = self.challenge_managers[challenge_name].load_state(
-                    state=manager_state,
-                    challenge_info=self.active_challenges[challenge_name],
-                    metagraph=self.metagraph,
-                )
-                # Update the existing challenge manager with the loaded state
-                self.challenge_managers[challenge_name] = loaded_manager
-
-        # Try to load miner commits from challenge managers
-        for challenge_name, manager in self.challenge_managers.items():
-            for miner_state in manager.miner_states.values():
-                if miner_state.latest_commit:
-                    self.miner_commits.setdefault(
-                        (miner_state.miner_uid, miner_state.miner_hotkey), {}
-                    )[challenge_name] = miner_state.latest_commit
-
-    def _fetch_miners_docker_info_from_storage(self) -> dict[str, dict]:
-        """
-        Fetch miners docker info (PAT and docker_username) from storage.
-
-        Returns:
-            dict: Dictionary mapping miner_hotkey to {"personal_access_token": str, "dockerhub_username": str}
-        """
-        bt.logging.info(
-            "[FETCH MINER DOCKER INFO] Fetching miner docker info from storage"
-        )
-
-        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
-        endpoint = f"{storage_url}/miner/docker-info"
-        header = self.validator_request_header_fn({})
-
-        try:
-            response = requests.get(endpoint, headers=header)
-            response.raise_for_status()
-            data = response.json()
-
-            miners_docker_info = {}
-            for miner_uid, doc in data.get("data", {}).items():
-                if miner_uid:
-                    miners_docker_info[miner_uid] = {
-                        "dockerhub_username": doc.get("dockerhub_username"),
-                        "last_updated": doc.get("last_updated"),
-                        "personal_access_token": doc.get("personal_access_token"),
-                    }
-
-            bt.logging.success(
-                f"[FETCH MINER DOCKER INFO] Fetched docker info for {len(miners_docker_info)} miners"
-            )
-            return miners_docker_info
-
-        except Exception as e:
-            bt.logging.error(
-                f"[FETCH MINER DOCKER INFO] Failed to fetch miner docker info: {traceback.format_exc()}"
-            )
-            return {}
-
-    def _init_scoring_api_state(self):
-
-        bt.logging.info("[INIT] Starting scoring api's  state initialization...")
-
-        state = None
-        state = self.storage_manager.get_latest_validator_state_from_storage(
-            validator_uid=self.uid,
-            validator_hotkey=self.wallet.hotkey.ss58_address,
-        )
-        if not state:
-            bt.logging.warning(
-                f"[INIT] No scoring api state found in centralized storage for scoring api {self.uid}, hotkey: {self.wallet.hotkey.ss58_address}, falling back to cache"
-            )
-            state = self.storage_manager.get_latest_validator_state_from_cache(
-                validator_uid=self.uid,
-                validator_hotkey=self.wallet.hotkey.ss58_address,
-            )
-        else:
-            bt.logging.success(
-                f"[INIT] Successfully retrieved scoring api state from centralized storage for scoring api {self.uid}, hotkey: {self.wallet.hotkey.ss58_address}"
-            )
-
-        if state:
-            # Load the state into the current instance
-            self.load_state(state)
-            bt.logging.success("[INIT] Successfully loaded existing scoring api state")
-        else:
-            bt.logging.info("[INIT] No existing state found, using empty state")
-
-        bt.logging.success("[INIT] Scoring API state initialization completed")
-
     def _init_active_challenges(self):
-        """
-        Initializes and updates challenge managers based on current active challenges.
-        Filters challenges by date and maintains challenge manager consistency.
-        """
         self.active_challenges = deepcopy(ACTIVE_CHALLENGES)
 
-        for challenge in self.active_challenges.keys():
-            if challenge not in self.challenge_managers:
-                self.challenge_managers[challenge] = self.active_challenges[challenge][
-                    "challenge_manager"
-                ](
-                    challenge_info=self.active_challenges[challenge],
-                    metagraph=self.metagraph,
-                )
-
-        self.challenge_managers = {
-            challenge: self.challenge_managers[challenge]
-            for challenge in self.challenge_managers
-            if challenge in self.active_challenges
-        }
-
-    def get_revealed_commits(self) -> dict[str, list[MinerChallengeCommit]]:
-        """
-        Collects all revealed commits from miners.
-        Filters unique docker_hub_ids in one pass and excludes previously scored submissions.
-        Returns up to 2 commits per miner/challenge from the cache.
-
-        Returns:
-            A dictionary where the key is the challenge name and the value is a list of MinerChallengeCommit.
-        """
-        seen_docker_hub_ids: set[str] = set()
-
-        miner_challenge_commits: dict[
-            tuple[int, str, str], list[MinerChallengeCommit]
-        ] = {}
-
-        for commit in self.miner_commits_cache.values():
-            key = (commit.miner_uid, commit.miner_hotkey, commit.challenge_name)
-            if key not in miner_challenge_commits:
-                miner_challenge_commits[key] = []
-            miner_challenge_commits[key].append(commit)
-
-        for key in miner_challenge_commits:
-            miner_challenge_commits[key].sort(
-                key=lambda x: (
-                    x.commit_timestamp if x.commit_timestamp else float("inf")
-                ),
-                reverse=True,
-            )
-            miner_challenge_commits[key] = miner_challenge_commits[key][:2]
-
-        revealed_commits: dict[str, list[MinerChallengeCommit]] = {}
-        _list_existing_commits = []
-        _list_revealed_commits = []
-        _list_skipped_commits = []
-        for (uid, hotkey, challenge_name), commits in miner_challenge_commits.items():
-            for commit in commits:
-                bt.logging.info(
-                    f"[GET REVEALED COMMITS] Try to reveal commit: {uid} - {hotkey} - {challenge_name} - {commit.encrypted_commit}"
-                )
-                if commit.commit:
-                    this_challenge_revealed_commits = revealed_commits.setdefault(
-                        challenge_name, []
-                    )
-                    docker_hub_id = commit.commit.split("---")[1]
-
-                    if (
-                        docker_hub_id in seen_docker_hub_ids
-                        or docker_hub_id
-                        in self.challenge_managers[
-                            challenge_name
-                        ].get_unique_scored_docker_hub_ids()
-                    ):
-                        _list_existing_commits.append(
-                            f"{challenge_name}-{uid}-{hotkey}-{docker_hub_id}"
-                        )
-                        continue
-                    else:
-                        commit.docker_hub_id = docker_hub_id
-                        this_challenge_revealed_commits.append(commit)
-                        seen_docker_hub_ids.add(docker_hub_id)
-                        _list_revealed_commits.append(
-                            f"{challenge_name}-{uid}-{hotkey}-{docker_hub_id}"
-                        )
-                else:
-                    _list_skipped_commits.append(f"{challenge_name}-{uid}-{hotkey}")
-        for list_name, list_data in [
-            ("Existing", sorted(_list_existing_commits)),
-            ("Revealed", sorted(_list_revealed_commits)),
-            ("Skipped", sorted(_list_skipped_commits)),
-        ]:
-            if list_data:
-                newline = "\n"  # Define newline character separately
-                bt.logging.info(
-                    f"[GET REVEALED COMMITS] {list_name} commits: {newline.join(list_data)}"
-                )
-            else:
-                bt.logging.info(
-                    f"[GET REVEALED COMMITS] No {list_name.lower()} commits"
-                )
-
-        return revealed_commits
-
-    def _store_miner_commits(
-        self, miner_commits: dict[str, list[MinerChallengeCommit]] = None
-    ):
-        """
-        Store miner commits to storage.
-        """
-        if not miner_commits:
-            miner_commits = {}
-            bt.logging.info(
-                "[STORE MINER COMMMITS] Storing all commits in self.miner_commits"
-            )
-            for _, miner_challenge_commits in self.miner_commits.items():
-                for challenge_name, commit in miner_challenge_commits.items():
-                    miner_commits.setdefault(challenge_name, []).append(commit)
-
-        data_to_store: list[MinerChallengeCommit] = [
-            commit
-            for challenge_name, commits in miner_commits.items()
-            for commit in commits
-        ]
-
-        bt.logging.info(
-            f"[STORE MINER COMMMITS] Storing {len(data_to_store)} commits to storage: {[commit.encrypted_commit[:15] for commit in data_to_store]}"
-        )
-
-        try:
-            self.storage_manager.update_commit_batch(
-                commits=data_to_store, async_update=True
-            )
-        except Exception as e:
-            bt.logging.error(f"Failed to queue miner commit data for storage: {e}")
-
-    def export_state(self, public_view: bool = False) -> dict:
-        """
-        Exports the current state of the Validator to a serializable dictionary.
-        Only exports dynamic state that needs to be preserved between sessions.
-
-        Returns:
-            dict: A dictionary containing the serialized state
-        """
-        # We no longer export miner commits since:
-        # 1. They change quickly and is taking up lots space.
-        # 2. They are already inside challenge_managers 's state, miner_state.latest_commit if updated successfully.
-
-        challenge_managers: dict[str, dict] = {
-            challenge_name: manager.export_state(public_view=public_view)
-            for challenge_name, manager in self.challenge_managers.items()
-        }
-
-        state = {
-            "validator_uid": self.uid,
-            "validator_hotkey": self.wallet.hotkey.ss58_address,
-            "challenge_managers": challenge_managers,
-            "scoring_dates": [],
-        }
-        return state
-
-    def _get_storage_api_key(self) -> str:
-        """
-        Retrieves the storage API key from the config.
-        """
+    def _get_storage_api_key(self) -> str | None:
         storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
         endpoint = f"{storage_url}/get-api-key"
         data = {"validator_uid": self.uid, "validator_hotkey": self.hotkey}
         header = self.validator_request_header_fn(data)
-        response = requests.post(endpoint, json=data, headers=header)
-        response.raise_for_status()
-        return response.json()["api_key"]
+        try:
+            response = requests.post(endpoint, json=data, headers=header, timeout=60)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()["api_key"]
+        except Exception:
+            bt.logging.warning(
+                f"[INIT] Failed to fetch storage API key: {traceback.format_exc()}"
+            )
+            return None
+
+    def _work_item_to_commit(self, item: dict) -> MinerChallengeCommit:
+        challenge_name = item["challenge_name"]
+        plain_commit = item["plain_commit"]
+        docker_hub_id = _docker_hub_id_from_plain_commit(challenge_name, plain_commit)
+        return MinerChallengeCommit(
+            miner_uid=item["miner_uid"],
+            miner_hotkey=item["hotkey_address"],
+            challenge_name=challenge_name,
+            docker_hub_id=docker_hub_id,
+            commit_timestamp=_as_timestamp(item.get("committed_at")),
+            encrypted_commit=item["cipher_commit"],
+            commit=plain_commit,
+        )
+
+    def _credentials_by_uid(self, work_items: list[dict]) -> dict[str, dict]:
+        credentials = self.storage.fetch_docker_credentials(
+            miner_ids=[item["miner_id"] for item in work_items if item.get("miner_id")],
+            hotkey_addresses=[
+                item["hotkey_address"] for item in work_items if item.get("hotkey_address")
+            ],
+        )
+        return {
+            str(item["miner_uid"]): {
+                "dockerhub_username": item.get("username"),
+                "personal_access_token": item.get("personal_access_token"),
+                "registry_url": item.get("registry_url"),
+            }
+            for item in credentials
+        }
+
+    def _reference_commit_from_payload(self, item: dict) -> MinerChallengeCommit | None:
+        commit_files, telemetry = _extract_commit_files(item)
+        if not commit_files:
+            return None
+
+        challenge_name = item["challenge_name"]
+        plain_commit = item["plain_commit"]
+        output = {"commit_files": commit_files}
+        if telemetry:
+            output["telemetry"] = telemetry
+
+        return MinerChallengeCommit(
+            miner_uid=item["miner_uid"],
+            miner_hotkey=item["hotkey_address"],
+            challenge_name=challenge_name,
+            docker_hub_id=_docker_hub_id_from_plain_commit(challenge_name, plain_commit),
+            commit_timestamp=_as_timestamp(item.get("committed_at")),
+            encrypted_commit=item["cipher_commit"],
+            commit=plain_commit,
+            score=item.get("final_score") or item.get("evaluated_score") or 0.0,
+            penalty=item.get("penalty_score") or 0.0,
+            accepted=True,
+            scored_timestamp=_as_timestamp(item.get("finalized_at"))
+            or _as_timestamp(item.get("evaluated_at")),
+            scoring_logs=[
+                ScoringLog(
+                    score=item.get("evaluated_score") or item.get("final_score") or 0.0,
+                    miner_output=output,
+                )
+            ],
+        )
+
+    def _fetch_reference_commits(
+        self, challenge_name: str
+    ) -> tuple[list[MinerChallengeCommit], dict[str, str]]:
+        challenge_info = self.active_challenges[challenge_name]
+        limit = challenge_info.get("comparison_config", {}).get("max_unique_commits", 15)
+        payloads = self.storage.fetch_accepted_reference_commits(
+            challenge_name=challenge_name,
+            limit=limit,
+        )
+
+        references = []
+        target_ids_by_key = {}
+        for payload in payloads:
+            commit = self._reference_commit_from_payload(payload)
+            if not commit:
+                continue
+            references.append(commit)
+            target_ids_by_key[
+                f"{commit.miner_uid}_{commit.encrypted_commit[:10]}"
+            ] = payload["commit_id"]
+        return references, target_ids_by_key
+
+    def _create_challenge_manager(self, challenge_name: str):
+        return self.active_challenges[challenge_name]["challenge_manager"](
+            challenge_info=self.active_challenges[challenge_name],
+            metagraph=self.metagraph,
+        )
+
+    def _get_baseline_commit_id(self) -> str | None:
+        if self._baseline_commit_id is not None:
+            return self._baseline_commit_id
+        try:
+            baseline_commit = self.storage.fetch_commit(
+                self.scoring_api_config.BASELINE_COMMIT_ID
+            )
+        except Exception:
+            bt.logging.warning(
+                f"[CENTRALIZED SCORING] Failed to fetch baseline commit: {traceback.format_exc()}"
+            )
+            return None
+        if not baseline_commit:
+            bt.logging.warning(
+                "[CENTRALIZED SCORING] Baseline commit "
+                f"{self.scoring_api_config.BASELINE_COMMIT_ID} not found"
+            )
+            return None
+        self._baseline_commit_id = baseline_commit["id"]
+        return self._baseline_commit_id
+
+    def _result_payload_for_commit(
+        self,
+        work_item: dict,
+        commit: MinerChallengeCommit,
+        target_ids_by_key: dict[str, str],
+    ) -> dict:
+        scored_at = commit.scored_timestamp or datetime.datetime.now(
+            datetime.timezone.utc
+        ).timestamp()
+        raw_score = commit.get_higest_scoring_score()
+        final_score = commit.score or 0.0
+        penalty_score = commit.penalty or 0.0
+        accepted = bool(commit.accepted)
+        status = "ACCEPTED" if accepted else "REJECTED"
+        first_log = commit.scoring_logs[0] if commit.scoring_logs else ScoringLog()
+
+        reason = "Accepted by centralized scorer" if accepted else "Rejected by centralized scorer"
+        if first_log.error:
+            reason = first_log.error[:256]
+
+        commit_outputs = []
+        if first_log.miner_output:
+            commit_outputs.append(
+                {
+                    "filename": f"{work_item['commit_id']}__miner-output.json",
+                    "role": "miner-output",
+                    "kind": "STRUCTURED",
+                    "mime_type": "application/json",
+                    "data": first_log.miner_output,
+                }
+            )
+
+        validation_outputs = []
+        if first_log.validation_output is not None:
+            validation_outputs.append(
+                {
+                    "check_name": "challenge-validation",
+                    "is_valid": bool(first_log.validation_output.get("is_valid", False))
+                    if isinstance(first_log.validation_output, dict)
+                    else False,
+                    "reason": json.dumps(first_log.validation_output, default=str)[:1024],
+                    "failed_at": None if accepted else _utc_iso(scored_at),
+                    "meta": first_log.validation_output
+                    if isinstance(first_log.validation_output, dict)
+                    else {"value": first_log.validation_output},
+                }
+            )
+
+        comparisons = []
+        for key, logs in commit.comparison_logs.items():
+            target_commit_id = (
+                self._get_baseline_commit_id()
+                if key.startswith("baseline_")
+                else target_ids_by_key.get(key)
+            )
+            if not target_commit_id:
+                continue
+            for log in logs:
+                comparisons.append(
+                    {
+                        "target_commit_id": target_commit_id,
+                        "similarity_score": log.similarity_score or 0.0,
+                        "reason": (log.reason or "")[:256],
+                        "error": log.error,
+                        "meta": {
+                            "reference_hotkey": log.reference_hotkey,
+                            "reference_similarity_score": log.reference_similarity_score,
+                        },
+                    }
+                )
+
+        return {
+            "commit_id": work_item["commit_id"],
+            "challenge_name": work_item["challenge_name"],
+            "plain_commit": work_item["plain_commit"],
+            "commit_result": {
+                "status": status,
+                "evaluated_score": raw_score,
+                "penalty_score": penalty_score,
+                "final_score": final_score,
+                "decay_state": "NONE",
+                "decayed_score": final_score,
+                "reason": reason,
+                "error": first_log.error,
+                "evaluated_at": _utc_iso(scored_at),
+                "finalized_at": _utc_iso(scored_at),
+                "meta": {
+                    "docker_hub_id": commit.docker_hub_id,
+                    "accepted": accepted,
+                },
+            },
+            "commit_outputs": commit_outputs,
+            "commit_validation_outputs": validation_outputs,
+            "commit_comparisons": comparisons,
+        }
+
+    def _rejected_result_for_work_item(self, item: dict, reason: str) -> dict:
+        now = _utc_iso()
+        return {
+            "commit_id": item["commit_id"],
+            "challenge_name": item["challenge_name"],
+            "plain_commit": item["plain_commit"],
+            "commit_result": {
+                "status": "REJECTED",
+                "evaluated_score": 0.0,
+                "penalty_score": 0.0,
+                "final_score": 0.0,
+                "decay_state": "NONE",
+                "decayed_score": 0.0,
+                "reason": reason[:256],
+                "error": reason,
+                "evaluated_at": now,
+                "finalized_at": now,
+            },
+            "commit_outputs": [],
+            "commit_validation_outputs": [],
+            "commit_comparisons": [],
+        }
+
+    def _score_challenge_batch(
+        self, challenge_name: str, work_items: list[dict], credentials: dict[str, dict]
+    ) -> list[dict]:
+        commits = [self._work_item_to_commit(item) for item in work_items]
+        commits.sort(
+            key=lambda commit: commit.commit_timestamp
+            if commit.commit_timestamp is not None
+            else float("inf")
+        )
+        references, target_ids_by_key = self._fetch_reference_commits(challenge_name)
+        controller = self.active_challenges[challenge_name]["controller"](
+            challenge_name=challenge_name,
+            miners_docker_info=credentials,
+            miner_commits=commits,
+            reference_comparison_commits=references,
+            challenge_info=self.active_challenges[challenge_name],
+            seed_inputs=[],
+        )
+        controller.start_challenge()
+
+        manager = self._create_challenge_manager(challenge_name)
+        manager.update_miner_scores(controller.miner_commits)
+
+        commits_by_docker_id = {commit.docker_hub_id: commit for commit in controller.miner_commits}
+        results = []
+        for item in work_items:
+            docker_hub_id = _docker_hub_id_from_plain_commit(
+                item["challenge_name"], item["plain_commit"]
+            )
+            commit = commits_by_docker_id.get(docker_hub_id)
+            if commit is None:
+                results.append(
+                    self._rejected_result_for_work_item(
+                        item, "Scoring controller did not return this commit."
+                    )
+                )
+                continue
+            results.append(
+                self._result_payload_for_commit(item, commit, target_ids_by_key)
+            )
+        return results
 
     def forward(self):
         date_time = datetime.datetime.now(datetime.timezone.utc)
-        # 1. Update active challenges
         bt.logging.info(f"[CENTRALIZED SCORING] Forwarding for {date_time}")
         self._init_active_challenges()
-        bt.logging.success(
-            f"[CENTRALIZED SCORING] Active challenges initialized for {date_time}: {self.active_challenges}"
+
+        work_items = self.storage.fetch_work_items(
+            challenge_name=None,
+            limit=self.scoring_api_config.BATCH_LIMIT,
         )
+        if not work_items:
+            bt.logging.info("[CENTRALIZED SCORING] No work items found")
+            return
 
-        # 2. Update subnet commits state
-        # Update commits from all validators
-        self._update_validators_miner_commits()
-        # Update (aggregate) miner commits
-        self._update_miner_commits()
-        bt.logging.success(
-            f"[CENTRALIZED SCORING] Miner commits updated for {date_time}"
-        )
-
-        # Update miner infos
-        for challenge_name, challenge_manager in self.challenge_managers.items():
-            miner_commits_for_this_challenge = []
-            for (uid, hotkey), commits in self.miner_commits.items():
-                for _challenge_name, commit in commits.items():
-                    if _challenge_name == challenge_name:
-                        miner_commits_for_this_challenge.append(commit)
-
-            challenge_manager.update_miner_infos(
-                miner_commits=miner_commits_for_this_challenge
-            )
-        bt.logging.success(
-            f"[CENTRALIZED SCORING] Miner infos in challenge managers updated for {date_time}"
-        )
-
-        # Get revealed commits
-        revealed_commits = self.get_revealed_commits()
-
-        # 3. Score and compare miner commits for each challenge
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Starting scoring process for revealed commits at {date_time}"
-        )
-        for challenge in revealed_commits:
-            if revealed_commits[challenge]:
-                # Score and compare new commits
-                self._score_and_compare_new_miner_commits(
-                    challenge=challenge,
-                    revealed_commits_list=revealed_commits[challenge],
-                )
-
-                # Update cache
-                for commit in revealed_commits[challenge]:
-                    self.scoring_results.set(
-                        challenge=challenge,
-                        docker_hub_id=commit.docker_hub_id,
-                        result={
-                            "scoring_logs": commit.scoring_logs,
-                            "comparison_logs": commit.comparison_logs,
-                            "scored_timestamp": commit.scored_timestamp,
-                        },
+        credentials = self._credentials_by_uid(work_items)
+        grouped: dict[str, list[dict]] = {}
+        results: list[dict] = []
+        for item in work_items:
+            challenge_name = item.get("challenge_name")
+            if challenge_name not in self.active_challenges:
+                results.append(
+                    self._rejected_result_for_work_item(
+                        item, f"Challenge '{challenge_name}' is not active in scorer."
                     )
-
-                bt.logging.info(
-                    f"[CENTRALIZED SCORING] Scoring for challenge: {challenge} has been completed"
                 )
+                continue
+            grouped.setdefault(challenge_name, []).append(item)
 
-                # Store commits and scoring cache from this challenge
-                self._store_miner_commits(
-                    miner_commits={challenge: revealed_commits[challenge]}
+        for challenge_name, challenge_items in grouped.items():
+            try:
+                results.extend(
+                    self._score_challenge_batch(
+                        challenge_name=challenge_name,
+                        work_items=challenge_items,
+                        credentials=credentials,
+                    )
                 )
-                self._store_centralized_scoring(challenge_name=challenge)
-
-        # Store scoring API state, this can be viewed by other validators, so we need to make it public view
-        self.storage_manager.update_validator_state(
-            data=self.export_state(public_view=True), async_update=True
-        )
-
-    def _score_and_compare_new_miner_commits(
-        self, challenge: str, revealed_commits_list: list[MinerChallengeCommit]
-    ):
-        """
-        Score and do comparison for new miner commits for a specific challenge.
-        The default comparing behaviour is to compare new commits with previous unique commits only, not with each other since we don't have new commits for the whole day yet
-
-        Args:
-            challenge (str): Challenge name
-            revealed_commits_list (list[MinerChallengeCommit]): List of new commits to score
-
-        Process:
-        1. Look up cached results for already scored commits, use cached results for already scored commits
-        2. Gather unique commits from challenge manager for comparison
-        3. Retrieve cached data for reference commits
-        4. Run challenge controller with:
-           - New commits to be scored
-           - Reference commits for comparison
-
-        """
-        if challenge not in self.active_challenges:
-            return
-
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Scoring miner commits for challenge: {challenge}"
-        )
-
-        if not revealed_commits_list:
-            bt.logging.info(
-                f"[CENTRALIZED SCORING] No commits for challenge: {challenge}, skipping"
-            )
-            return
-
-        # 1. Look up cached results for already scored commits, use cached results for already scored commits
-        # Also construct input seeds for new commits, this will be using input from commits that in the same revealed list for comparison
-        # We do this since commits being in the same revealed list means that they will be scored in same day
-        new_commits: list[MinerChallengeCommit] = []
-        seed_inputs: list[dict] = []
-
-        input_seed_hashes_set: set[str] = set()
-        for commit in revealed_commits_list:
-            if commit.docker_hub_id in self.scoring_results.get_all_for_challenge(
-                challenge
-            ):
-                cached_result = self.scoring_results.get(
-                    challenge=challenge, docker_hub_id=commit.docker_hub_id
+            except Exception:
+                error = traceback.format_exc()
+                bt.logging.error(
+                    f"[CENTRALIZED SCORING] Challenge {challenge_name} failed: {error}"
                 )
-                commit.scoring_logs = cached_result["scoring_logs"]
-                commit.comparison_logs = cached_result["comparison_logs"]
-                # Restore scored_timestamp from cache to prevent data loss
-                if cached_result.get("scored_timestamp"):
-                    commit.scored_timestamp = cached_result["scored_timestamp"]
+                for item in challenge_items:
+                    results.append(self._rejected_result_for_work_item(item, error))
 
-                # Add input seed hash to set
-                for scoring_log in commit.scoring_logs:
-                    if (
-                        scoring_log.input_hash
-                        and scoring_log.input_hash not in input_seed_hashes_set
-                    ):
-                        input_seed_hashes_set.add(scoring_log.input_hash)
-                        seed_inputs.append(scoring_log.miner_input)
-            else:
-                new_commits.append(commit)
-
-        if not new_commits:
-            # No new commits to score, skip
-            self.challenge_managers[challenge].update_miner_scores(
-                revealed_commits_list
-            )
-            bt.logging.info(
-                f"[CENTRALIZED SCORING] No new commits to score for challenge: {challenge}, skipping"
-            )
-            return
-        else:
-            _sorted_new_miner_commits = sorted(
-                new_commits,
-                key=lambda x: (
-                    x.commit_timestamp if x.commit_timestamp else float("inf")
-                ),
-            )
-            bt.logging.info(
-                f"[CENTRALIZED SCORING] {len(_sorted_new_miner_commits)} new commits to score for challenge: {challenge}"
-            )
-
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Running controller for challenge: {challenge}"
+        uploaded = self.storage.upload_results(results)
+        bt.logging.success(
+            f"[CENTRALIZED SCORING] Uploaded {len(uploaded)} scoring results"
         )
-
-        # 3. Run challenge controller
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Running controller for challenge: {challenge}"
-        )
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Going to score {len(_sorted_new_miner_commits)} commits for challenge: {challenge}"
-        )
-        self.miners_docker_info = self._fetch_miners_docker_info_from_storage()
-        _accepted_commits = self._get_accepted_challenge_commits(
-            challenge_name=challenge
-        )
-        # This challenge controll will run with new inputs and reference commit input
-        # Reference commits are collected from yesterday, so if same docker_hub_id commited same day, they can share comparison_logs field, and of course, scoring_logs field
-        # If same docker_hub_id commited different day, the later one expected to be ignored anyway
-        controller = self.active_challenges[challenge]["controller"](
-            challenge_name=challenge,
-            miners_docker_info=self.miners_docker_info,
-            miner_commits=_sorted_new_miner_commits,
-            reference_comparison_commits=_accepted_commits,
-            challenge_info=self.active_challenges[challenge],
-            seed_inputs=seed_inputs,
-        )
-        # Run challenge controller, the controller update commit 's scoring logs and reference comparison logs directly
-        controller.start_challenge()
-
-        # Update commits with challenge_managers
-        self.challenge_managers[challenge].update_miner_scores(controller.miner_commits)
 
     def run(self):
         bt.logging.info("Starting scoring API loop.")
-        # Try set weights after initial sync
 
         while True:
-            # Check if we need to start a new forward thread
             if self.forward_thread is None or not self.forward_thread.is_alive():
-                # Start new forward thread
                 self.forward_thread = threading.Thread(
                     target=self._run_forward,
                     daemon=True,
-                    name="validator_forward_thread",
+                    name="scoring_api_forward_thread",
                 )
                 self.forward_thread.start()
                 bt.logging.info("Started new forward thread")
@@ -601,494 +586,13 @@ class ScoringApi(BaseScoringApi):
                 bt.logging.success("Keyboard interrupt detected. Exiting validator.")
                 exit()
 
-            # Sleep until next weight update
             time.sleep(self.config.EPOCH_LENGTH)
-
-    # MARK: Commit Management
-    def _update_validators_miner_commits(self):
-        """
-        Fetch all miner commits for challenges from all valid validators in the subnet.
-
-        Process:
-        1. Filter valid validators based on minimum stake requirement
-        2. For each valid validator:
-           - Fetch their latest miner commits from storage
-           - Validate and process commits for active miners
-           - Store in self.validators_miner_commits with validator (uid, hotkey) as key
-        """
-        # Get list of valid validators based on stake
-        valid_validators = []
-        for validator_uid, validator_ss58_address in enumerate(self.metagraph.hotkeys):
-            stake = self.metagraph.S[validator_uid]
-            if stake >= self.config.MIN_VALIDATOR_STAKE:
-                valid_validators.append((validator_uid, validator_ss58_address))
-
-        bt.logging.info(
-            f"[CENTRALIZED COMMIT UPDATES] Found {len(valid_validators)} valid validators"
-        )
-
-        # Initialize/clear validators_miner_commits for this round
-        self.validators_miner_commits = {}
-        self.miner_commits_cache: dict[str, MinerChallengeCommit] = {}
-
-        for validator_uid, validator_hotkey in valid_validators:
-            # Skip if request fails
-            try:
-                storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
-                endpoint = f"{storage_url}/fetch-latest-miner-commits"
-                data = {
-                    "validator_uid": validator_uid,
-                    "validator_hotkey": validator_hotkey,
-                    "challenge_names": list(self.active_challenges.keys()),
-                }
-                response = requests.post(
-                    endpoint, headers=self.validator_request_header_fn(data), json=data
-                )
-                response.raise_for_status()
-                # Only continue if response is successful
-                data = response.json()
-                this_validator_miner_commits: dict[
-                    tuple[int, str], dict[str, MinerChallengeCommit]
-                ] = {}
-                # Process miner submissions for this validator
-                for miner_hotkey, miner_commits in data["miner_commits"].items():
-                    if miner_hotkey not in self.metagraph.hotkeys:
-                        # Skip if miner hotkey is not in metagraph
-                        continue
-
-                    for challenge_name, miner_commit in miner_commits.items():
-                        if isinstance(miner_commit, list):
-                            miner_commit_objs = []
-                            for commit_data in miner_commit:
-                                miner_commit_obj = MinerChallengeCommit.model_validate(
-                                    commit_data
-                                )
-                                miner_commit_objs.append(miner_commit_obj)
-                                cache_key = f"{miner_commit_obj.challenge_name}---{miner_commit_obj.encrypted_commit}"
-                                if cache_key not in self.miner_commits_cache:
-                                    self.miner_commits_cache[cache_key] = (
-                                        miner_commit_obj
-                                    )
-                                else:
-                                    existing = self.miner_commits_cache[cache_key]
-                                    if (
-                                        miner_commit_obj.commit_timestamp
-                                        and existing.commit_timestamp
-                                        and miner_commit_obj.commit_timestamp
-                                        < existing.commit_timestamp
-                                    ):
-                                        self.miner_commits_cache[cache_key] = (
-                                            miner_commit_obj
-                                        )
-
-                            if miner_commit_objs:
-                                latest_commit = max(
-                                    miner_commit_objs,
-                                    key=lambda x: (
-                                        x.commit_timestamp
-                                        if x.commit_timestamp
-                                        else float("-inf")
-                                    ),
-                                )
-                                miner_key = (
-                                    latest_commit.miner_uid,
-                                    latest_commit.miner_hotkey,
-                                )
-                                this_validator_miner_commits.setdefault(miner_key, {})[
-                                    challenge_name
-                                ] = latest_commit
-                        else:
-                            miner_commit_obj = MinerChallengeCommit.model_validate(
-                                miner_commit
-                            )
-                            this_validator_miner_commits.setdefault(
-                                (
-                                    miner_commit_obj.miner_uid,
-                                    miner_commit_obj.miner_hotkey,
-                                ),
-                                {},
-                            )[miner_commit_obj.challenge_name] = miner_commit_obj
-
-                            cache_key = f"{miner_commit_obj.challenge_name}---{miner_commit_obj.encrypted_commit}"
-                            if cache_key not in self.miner_commits_cache:
-                                self.miner_commits_cache[cache_key] = miner_commit_obj
-
-                self.validators_miner_commits[(validator_uid, validator_hotkey)] = (
-                    this_validator_miner_commits
-                )
-                bt.logging.success(
-                    f"[CENTRALIZED COMMIT UPDATES] Fetched miner commits data from validator {validator_uid}, hotkey: {validator_hotkey}"
-                )
-
-            except Exception:
-                bt.logging.warning(
-                    f"[CENTRALIZED COMMIT UPDATES] Failed to fetch data for validator {validator_uid}, hotkey: {validator_hotkey}: {traceback.format_exc()}"
-                )
-                continue
-
-        bt.logging.success(
-            f"[CENTRALIZED COMMIT UPDATES] Updated validators_miner_submit with data from {len(self.validators_miner_commits)} validators"
-        )
-
-    def _update_miner_commits(self):
-        """
-        Aggregate miner commits from all validators into a single state.
-
-        Process:
-        1. Create new aggregated state from all validator commits
-        2. For each miner/challenge:
-           - Keep latest commit based on timestamp
-           - For same encrypted_commit:
-             * Use older commit timestamp
-             * Preserve key and commit information
-           - For different encrypted_commit:
-             * Keep newer one based on timestamp
-        3. Merge scoring data from existing state for unchanged commits
-        4. Sort and store self.miner_commits by miner uid and hotkey for deterministic ordering
-        """
-        new_miner_commits: dict[tuple[int, str], dict[str, MinerChallengeCommit]] = {}
-
-        for _, miner_commits_from_validator in self.validators_miner_commits.items():
-            for (
-                miner_uid,
-                miner_hotkey,
-            ), miner_commits_in_challenges in miner_commits_from_validator.items():
-                if not (
-                    miner_uid < len(self.metagraph.hotkeys)
-                    and miner_hotkey == self.metagraph.hotkeys[miner_uid]
-                ):
-                    continue
-
-                miner_key = (miner_uid, miner_hotkey)
-
-                if miner_key not in new_miner_commits:
-                    new_miner_commits[miner_key] = miner_commits_in_challenges
-                else:
-                    for (
-                        challenge_name,
-                        miner_commit,
-                    ) in miner_commits_in_challenges.items():
-                        if challenge_name not in new_miner_commits[miner_key]:
-                            new_miner_commits[miner_key][challenge_name] = miner_commit
-                        else:
-                            current_miner_commit = new_miner_commits[miner_key][
-                                challenge_name
-                            ]
-                            if (
-                                miner_commit.encrypted_commit
-                                == current_miner_commit.encrypted_commit
-                            ):
-                                if (
-                                    miner_commit.commit_timestamp
-                                    and current_miner_commit.commit_timestamp
-                                    and miner_commit.commit_timestamp
-                                    < current_miner_commit.commit_timestamp
-                                ):
-                                    current_miner_commit.commit_timestamp = (
-                                        miner_commit.commit_timestamp
-                                    )
-                                if not current_miner_commit.key:
-                                    current_miner_commit.key = miner_commit.key
-                                if not current_miner_commit.commit:
-                                    current_miner_commit.commit = miner_commit.commit
-                            else:
-                                if (
-                                    miner_commit.commit_timestamp
-                                    and current_miner_commit.commit_timestamp
-                                    and miner_commit.commit_timestamp
-                                    > current_miner_commit.commit_timestamp
-                                ):
-                                    new_miner_commits[miner_key][
-                                        challenge_name
-                                    ] = miner_commit
-                                else:
-                                    continue
-
-        for miner_key, existing_challenges in self.miner_commits.items():
-            if miner_key not in new_miner_commits:
-                continue
-
-            for challenge_name, existing_commit in existing_challenges.items():
-                if challenge_name not in new_miner_commits[miner_key]:
-                    continue
-
-                new_commit = new_miner_commits[miner_key][challenge_name]
-                if existing_commit.encrypted_commit == new_commit.encrypted_commit:
-                    new_commit.scoring_logs = existing_commit.scoring_logs
-                    new_commit.comparison_logs = existing_commit.comparison_logs
-                    new_commit.score = existing_commit.score
-                    new_commit.penalty = existing_commit.penalty
-                    new_commit.accepted = existing_commit.accepted
-                    new_commit.scored_timestamp = existing_commit.scored_timestamp
-        self.miner_commits = new_miner_commits
-
-        self.miner_commits = {
-            (uid, ss58_address): commits
-            for (uid, ss58_address), commits in sorted(
-                self.miner_commits.items(), key=lambda item: item[0]
-            )
-        }
-
-    # MARK: Storage
-    def _store_centralized_scoring(self, challenge_name: str = None):
-        """
-        Store scoring results to centralized storage.
-
-        Args:
-            challenge_name (str, optional): Specific challenge to store.
-                                          If None, stores all challenges.
-
-        Stores:
-            - Challenge name
-            - Docker hub ID
-            - Scoring logs
-            - Comparison logs
-        """
-        challenge_names = (
-            [challenge_name] if challenge_name else list(self.scoring_results.keys())
-        )
-        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
-        endpoint = f"{storage_url}/upload-centralized-score"
-
-        for challenge_name in challenge_names:
-            scoring_results_to_send: list[dict] = []
-            # Send batch of maximum 5 results at a time to avoid huge payload
-            for docker_hub_id, result in self.scoring_results.get_all_for_challenge(
-                challenge_name
-            ).items():
-                scoring_result = {
-                    "challenge_name": challenge_name,
-                    "docker_hub_id": docker_hub_id,
-                    "scoring_logs": [
-                        scoring_log.model_dump()
-                        for scoring_log in result.get("scoring_logs", [])
-                    ],
-                    "comparison_logs": {
-                        docker_hub_id: [
-                            comparison_log.model_dump()
-                            for comparison_log in _comparison_logs
-                        ]
-                        for docker_hub_id, _comparison_logs in result.get(
-                            "comparison_logs", {}
-                        ).items()
-                    },
-                    "scored_timestamp": result.get("scored_timestamp"),
-                }
-                scoring_results_to_send.append(scoring_result)
-
-                if len(scoring_results_to_send) >= 5:
-                    try:
-                        data = {"scoring_results": scoring_results_to_send}
-                        response = requests.post(
-                            endpoint,
-                            headers=self.validator_request_header_fn(data),
-                            json=data,
-                        )
-                        response.raise_for_status()
-                        scoring_results_to_send = []
-                    except Exception:
-                        bt.logging.error(
-                            f"Failed to send scoring results to storage: {traceback.format_exc()}"
-                        )
-                        scoring_results_to_send = []
-
-            if scoring_results_to_send:
-                try:
-                    data = {"scoring_results": scoring_results_to_send}
-                    response = requests.post(
-                        endpoint,
-                        headers=self.validator_request_header_fn(data),
-                        json=data,
-                    )
-                    response.raise_for_status()
-                except Exception:
-                    bt.logging.error(
-                        f"Failed to send scoring results to storage: {traceback.format_exc()}"
-                    )
-
-    def _get_accepted_challenge_commits(self, challenge_name: str) -> list:
-        _payload = {"challenge_name": challenge_name}
-        header = self.validator_request_header_fn(_payload)
-
-        storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
-        endpoint = f"{storage_url}/fetch-accepted-miner-commits"
-        commits = requests.post(endpoint, json=_payload, headers=header)
-        if commits.status_code == 200 and commits.json().get("miner_commits"):
-            commits = commits.json().get("miner_commits", [])
-            bt.logging.info(
-                f"Fetched {len(commits)} accepted challenge commits for {challenge_name}"
-            )
-            if not commits:
-                bt.logging.warning(
-                    f"No accepted challenge commits found for {challenge_name}"
-                )
-            _accepted_commits: list[MinerChallengeCommit] = []
-            for commit_data in commits:
-                try:
-                    commit = MinerChallengeCommit.model_validate(
-                        commit_data["commits"][0]
-                    )
-                    _accepted_commits.append(commit)
-                except Exception:
-                    bt.logging.error(
-                        f"Failed to validate accepted challenge commit: {traceback.format_exc()}"
-                    )
-            return _accepted_commits
-        else:
-            bt.logging.warning(
-                f"Failed to fetch accepted challenge commits: {commits.status_code} - {commits.text}"
-            )
-            return []
-
-    def _initialize_scoring_cache(self):
-        """
-        Initialize the scoring LRU cache with the most recent data from centralized storage.
-        Uses the limit parameter to get only the most recent data per challenge.
-        """
-        bt.logging.info(
-            "[CENTRALIZED SCORING] Initializing scoring LRU cache from storage"
-        )
-
-        # Process each challenge separately to manage memory usage
-        for challenge_name in self.active_challenges.keys():
-            try:
-                # Request the most recent entries for this challenge
-                entries_per_challenge = 256  # Match the LRU cache size
-
-                storage_url = str(self.config.STORAGE_API_URL).rstrip("/")
-                endpoint = f"{storage_url}/fetch-centralized-score"
-                data = {
-                    "challenge_names": [challenge_name],
-                    "limit": entries_per_challenge,  # Get the most recent entries
-                    "full_results": False,  # Apply date filtering for recency
-                    "get_detailed_results": True,  # Get full details
-                }
-
-                bt.logging.info(
-                    f"[CENTRALIZED SCORING] Fetching up to {entries_per_challenge} scoring results for challenge {challenge_name}"
-                )
-
-                response = requests.post(
-                    endpoint, headers=self.validator_request_header_fn(data), json=data
-                )
-                response.raise_for_status()
-                results = response.json()["data"]
-
-                if not results:
-                    bt.logging.info(
-                        f"[CENTRALIZED SCORING] No scoring results found for challenge {challenge_name}"
-                    )
-                    continue
-
-                loaded_count = 0
-                for result in results:
-                    processed_result = {
-                        "scoring_logs": [
-                            ScoringLog.model_validate(scoring_log)
-                            for scoring_log in result["scoring_logs"]
-                        ],
-                        "comparison_logs": {
-                            docker_hub_id: [
-                                ComparisonLog.model_validate(comparison_log)
-                                for comparison_log in _comparison_logs
-                            ]
-                            for docker_hub_id, _comparison_logs in result[
-                                "comparison_logs"
-                            ].items()
-                        },
-                        "scored_timestamp": result.get("scored_timestamp"),
-                    }
-
-                    # Store in our LRU cache
-                    self.scoring_results.set(
-                        challenge=challenge_name,
-                        docker_hub_id=result["docker_hub_id"],
-                        result=processed_result,
-                    )
-                    loaded_count += 1
-
-                bt.logging.info(
-                    f"[CENTRALIZED SCORING] Loaded {loaded_count} scoring results for challenge {challenge_name}"
-                )
-
-            except Exception as e:
-                bt.logging.error(
-                    f"[CENTRALIZED SCORING] Error initializing scoring cache for challenge {challenge_name}: {traceback.format_exc()}"
-                )
-
-        # Log statistics about the populated cache
-        stats = self.scoring_results.get_stats()
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Cache initialized with {stats['total_entries']} total entries"
-        )
-        bt.logging.info(
-            f"[CENTRALIZED SCORING] Cache entries per challenge: {stats['challenge_counts']}"
-        )
-
-    def _sync_scoring_results_from_storage_to_cache(self):
-        """
-        Sync scoring results (self.scoring_results) from storage to cache.
-        This method will update the cache with scoring results from storage.
-        """
-        # Iter all the keys in all cache corespond to active challenges
-        for challenge_name in self.active_challenges.keys():
-            diskcache_ = self.storage_manager._get_cache(challenge_name)
-            memcache_ = self.scoring_results.get_all_for_challenge(challenge_name)
-
-            for hashed_cache_key in diskcache_.iterkeys():
-                commit = diskcache_.get(hashed_cache_key)
-                try:
-                    commit = MinerChallengeCommit.model_validate(
-                        commit
-                    )  # Model validate the commit
-                except Exception:
-                    continue
-
-                # Check if docker_hub_id is in self.scoring_results
-                if commit.docker_hub_id not in memcache_:
-                    continue
-
-                # Found the commit in self.scoring_results, now we make sure cache have correct scoring_logs
-                has_changes = False
-                if not commit.scoring_logs:
-                    # If not scoring_logs, we add the scoring_logs from self.scoring_results
-                    commit.scoring_logs = memcache_[commit.docker_hub_id][
-                        "scoring_logs"
-                    ]
-                    has_changes = True
-                else:
-                    # Check for each entries in scoring_logs for miner_input and miner_output, they should not be None
-                    scoring_logs_with_none = []
-                    for scoring_log in commit.scoring_logs:
-                        if (
-                            scoring_log.miner_input is None
-                            or scoring_log.miner_output is None
-                        ):
-                            scoring_logs_with_none.append(scoring_log)
-
-                    # If there are any scoring logs with None, we use the scoring_logs from self.scoring_results and update the cache
-                    if any(scoring_logs_with_none):
-                        commit.scoring_logs = memcache_[commit.docker_hub_id][
-                            "scoring_logs"
-                        ]
-                        has_changes = True
-
-                # Sync scored_timestamp from memory cache to disk cache if missing
-                if not commit.scored_timestamp and memcache_[commit.docker_hub_id].get(
-                    "scored_timestamp"
-                ):
-                    commit.scored_timestamp = memcache_[commit.docker_hub_id][
-                        "scored_timestamp"
-                    ]
-                    has_changes = True
-
-                if has_changes:
-                    diskcache_[hashed_cache_key] = commit.model_dump()
 
 
 if __name__ == "__main__":
+    scoring_api_config = ScoringApiMainConfig()
     server_thread = threading.Thread(
-        target=start_ping_server, args=(SCORING_API_PORT,), daemon=True
+        target=start_ping_server, args=(scoring_api_config.PORT,), daemon=True
     )
     server_thread.start()
     with ScoringApi() as app:
