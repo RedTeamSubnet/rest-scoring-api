@@ -43,7 +43,9 @@ class BaseScoringApi(ABC):
         self.wallet = bt.Wallet(config=bt_config)
         bt.logging.info(f"Wallet: {self.wallet}")
 
-        self.subtensor = bt.Subtensor(config=bt_config)
+        self.subtensor = bt.Subtensor(
+            network=self.config.BITTENSOR.SUBTENSOR_NETWORK, config=bt_config
+        )
         bt.logging.info(f"Subtensor: {self.subtensor}")
 
         self.dendrite = bt.Dendrite(wallet=self.wallet)
