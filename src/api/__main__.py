@@ -345,8 +345,9 @@ class ScoringApi(BaseScoringApi):
 
         data_to_store: list[MinerChallengeCommit] = [
             commit
-            for challenge_name, commits in miner_commits.items()
+            for _, commits in miner_commits.items()
             for commit in commits
+            if self._is_current_metagraph_miner(commit.miner_uid, commit.miner_hotkey)
         ]
 
         bt.logging.info(
