@@ -105,7 +105,7 @@ class BaseScoringApi(ABC):
             bt.logging.debug("Started")
 
     def resync_metagraph(self):
-        self.metagraph.sync()
+        self.metagraph.sync(subtensor=self.subtensor)
 
     def _run_forward(self):
         """Run a single forward pass in a separate thread."""

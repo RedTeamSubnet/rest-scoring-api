@@ -234,6 +234,12 @@ class ScoringApi(BaseScoringApi):
             if challenge in self.active_challenges
         }
 
+    def _is_current_metagraph_miner(self, miner_uid: int, miner_hotkey: str) -> bool:
+        return (
+            0 <= miner_uid < len(self.metagraph.hotkeys)
+            and self.metagraph.hotkeys[miner_uid] == miner_hotkey
+        )
+
     def get_revealed_commits(self) -> dict[str, list[MinerChallengeCommit]]:
         """
         Collects all revealed commits from miners.
@@ -269,6 +275,12 @@ class ScoringApi(BaseScoringApi):
         _list_revealed_commits = []
         _list_skipped_commits = []
         for (uid, hotkey, challenge_name), commits in miner_challenge_commits.items():
+            if not self._is_current_metagraph_miner(uid, hotkey):
+                _list_skipped_commits.append(
+                    f"{challenge_name}-{uid}-{hotkey}-metagraph-mismatch"
+                )
+                continue
+
             for commit in commits:
                 bt.logging.info(
                     f"[GET REVEALED COMMITS] Try to reveal commit: {uid} - {hotkey} - {challenge_name} - {commit.encrypted_commit}"
@@ -753,10 +765,7 @@ class ScoringApi(BaseScoringApi):
                 miner_uid,
                 miner_hotkey,
             ), miner_commits_in_challenges in miner_commits_from_validator.items():
-                if not (
-                    miner_uid < len(self.metagraph.hotkeys)
-                    and miner_hotkey == self.metagraph.hotkeys[miner_uid]
-                ):
+                if not self._is_current_metagraph_miner(miner_uid, miner_hotkey):
                     continue
 
                 miner_key = (miner_uid, miner_hotkey)
