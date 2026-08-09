@@ -282,9 +282,6 @@ class ScoringApi(BaseScoringApi):
                 continue
 
             for commit in commits:
-                bt.logging.info(
-                    f"[GET REVEALED COMMITS] Try to reveal commit: {uid} - {hotkey} - {challenge_name} - {commit.encrypted_commit}"
-                )
                 if commit.commit:
                     this_challenge_revealed_commits = revealed_commits.setdefault(
                         challenge_name, []
@@ -311,20 +308,9 @@ class ScoringApi(BaseScoringApi):
                         )
                 else:
                     _list_skipped_commits.append(f"{challenge_name}-{uid}-{hotkey}")
-        for list_name, list_data in [
-            ("Existing", sorted(_list_existing_commits)),
-            ("Revealed", sorted(_list_revealed_commits)),
-            ("Skipped", sorted(_list_skipped_commits)),
-        ]:
-            if list_data:
-                newline = "\n"  # Define newline character separately
-                bt.logging.info(
-                    f"[GET REVEALED COMMITS] {list_name} commits: {newline.join(list_data)}"
-                )
-            else:
-                bt.logging.info(
-                    f"[GET REVEALED COMMITS] No {list_name.lower()} commits"
-                )
+        bt.logging.info(
+            f"[REVEALED COMMITS] number of revealed commits: {len(_list_revealed_commits)}, existing commits: {len(_list_existing_commits)}, skipped commits: {len(_list_skipped_commits)}"
+        )
 
         return revealed_commits
 
