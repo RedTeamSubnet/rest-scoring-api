@@ -20,7 +20,6 @@ services:
   fluent-bit:
     image: cr.fluentbit.io/fluent/fluent-bit:latest
     restart: unless-stopped
-    network_mode: host
     env_file:
       - .env
     volumes:
