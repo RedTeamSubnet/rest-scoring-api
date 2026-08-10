@@ -19,6 +19,11 @@ function normalize_loguru(tag, timestamp, record)
         record["level_no"] = level["no"]
     end
 
+    local log_time = loguru_record["time"]
+    if type(log_time) == "table" and log_time["timestamp"] ~= nil then
+        record["_timestamp"] = log_time["timestamp"]
+    end
+
     record["record"] = nil
     return 2, timestamp, record
 end
