@@ -1,10 +1,10 @@
 import datetime
 
-from src.api.__main__ import (
-    _docker_hub_id_from_plain_commit,
-    _extract_commit_files,
-    _as_timestamp,
-    _join_url,
+from src.api.scoring_helpers import (
+    as_timestamp as _as_timestamp,
+    docker_hub_id_from_plain_commit as _docker_hub_id_from_plain_commit,
+    extract_commit_files as _extract_commit_files,
+    join_url as _join_url,
 )
 
 

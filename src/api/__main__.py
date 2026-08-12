@@ -23,14 +23,12 @@ from redteam_core.validator.utils import create_validator_request_header_fn
 from ._base import BaseScoringApi
 from .config import ScoringApiMainConfig
 from .router import start_ping_server
-
-
-def _join_url(base: str, *parts: str) -> str:
-    value = base.rstrip("/")
-    for part in parts:
-        if part:
-            value = f"{value}/{part.strip('/')}"
-    return value
+from .scoring_helpers import (
+    as_timestamp as _as_timestamp,
+    docker_hub_id_from_plain_commit as _docker_hub_id_from_plain_commit,
+    extract_commit_files as _extract_commit_files,
+    join_url as _join_url,
+)
 
 
 class ScoringStorageClient:
@@ -114,74 +112,12 @@ class ScoringStorageClient:
         return response.json().get("data", [])
 
 
-def _as_timestamp(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return datetime.datetime.fromisoformat(
-                value.replace("Z", "+00:00")
-            ).timestamp()
-        except ValueError:
-            return None
-    if isinstance(value, datetime.datetime):
-        return value.timestamp()
-    return None
-
-
 def _utc_iso(timestamp: float | None = None) -> str:
     if timestamp is None:
         dt = datetime.datetime.now(datetime.timezone.utc)
     else:
         dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
     return dt.isoformat()
-
-
-def _docker_hub_id_from_plain_commit(challenge_name: str, plain_commit: str) -> str:
-    prefix = f"{challenge_name}---"
-    if plain_commit.startswith(prefix):
-        return plain_commit[len(prefix) :]
-    if "---" in plain_commit:
-        return plain_commit.split("---", 1)[1]
-    return plain_commit
-
-
-def _json_loads_maybe(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    try:
-        return json.loads(value)
-    except Exception:
-        return value
-
-
-def _extract_commit_files(payload: dict) -> tuple[list[dict], dict | None]:
-    """Return replayable commit_files and optional telemetry from storage payload."""
-    for output in payload.get("commit_outputs") or []:
-        data = _json_loads_maybe(output.get("data"))
-        if isinstance(data, dict) and isinstance(data.get("commit_files"), list):
-            return data["commit_files"], data.get("telemetry")
-        if isinstance(data, list):
-            return data, None
-
-    commit_files = []
-    for file_data in payload.get("commit_files") or []:
-        data = _json_loads_maybe(file_data.get("data"))
-        if isinstance(data, dict) and isinstance(data.get("commit_files"), list):
-            return data["commit_files"], data.get("telemetry")
-        if isinstance(data, list):
-            return data, None
-        content = data if isinstance(data, str) else file_data.get("content")
-        filename = (
-            file_data.get("file_name")
-            or file_data.get("orig_filename")
-            or file_data.get("filename")
-        )
-        if filename and content is not None:
-            commit_files.append({"file_name": filename, "content": content})
-    return commit_files, None
 
 
 class ScoringApi(BaseScoringApi):
