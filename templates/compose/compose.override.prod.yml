@@ -20,7 +20,8 @@ services:
   fluent-bit:
     image: cr.fluentbit.io/fluent/fluent-bit:latest
     restart: unless-stopped
-    network_mode: host
+    env_file:
+      - .env
     volumes:
       - "./volumes/configs/fluent-bit:/fluent-bit/etc:ro"
       - "./volumes/storage/rest-scoring-api/log:/var/log/rest-scoring-api:ro"

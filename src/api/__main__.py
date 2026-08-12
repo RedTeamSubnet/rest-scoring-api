@@ -121,7 +121,9 @@ def _as_timestamp(value: Any) -> float | None:
         return float(value)
     if isinstance(value, str):
         try:
-            return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            return datetime.datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            ).timestamp()
         except ValueError:
             return None
     if isinstance(value, datetime.datetime):
@@ -261,7 +263,9 @@ class ScoringApi(BaseScoringApi):
         credentials = self.storage.fetch_docker_credentials(
             miner_ids=[item["miner_id"] for item in work_items if item.get("miner_id")],
             hotkey_addresses=[
-                item["hotkey_address"] for item in work_items if item.get("hotkey_address")
+                item["hotkey_address"]
+                for item in work_items
+                if item.get("hotkey_address")
             ],
         )
         return {
@@ -288,7 +292,9 @@ class ScoringApi(BaseScoringApi):
             miner_uid=item["miner_uid"],
             miner_hotkey=item["hotkey_address"],
             challenge_name=challenge_name,
-            docker_hub_id=_docker_hub_id_from_plain_commit(challenge_name, plain_commit),
+            docker_hub_id=_docker_hub_id_from_plain_commit(
+                challenge_name, plain_commit
+            ),
             commit_timestamp=_as_timestamp(item.get("committed_at")),
             encrypted_commit=item["cipher_commit"],
             commit=plain_commit,
@@ -309,7 +315,9 @@ class ScoringApi(BaseScoringApi):
         self, challenge_name: str
     ) -> tuple[list[MinerChallengeCommit], dict[str, str]]:
         challenge_info = self.active_challenges[challenge_name]
-        limit = challenge_info.get("comparison_config", {}).get("max_unique_commits", 15)
+        limit = challenge_info.get("comparison_config", {}).get(
+            "max_unique_commits", 15
+        )
         payloads = self.storage.fetch_accepted_reference_commits(
             challenge_name=challenge_name,
             limit=limit,
@@ -322,9 +330,9 @@ class ScoringApi(BaseScoringApi):
             if not commit:
                 continue
             references.append(commit)
-            target_ids_by_key[
-                f"{commit.miner_uid}_{commit.encrypted_commit[:10]}"
-            ] = payload["commit_id"]
+            target_ids_by_key[f"{commit.miner_uid}_{commit.encrypted_commit[:10]}"] = (
+                payload["commit_id"]
+            )
         return references, target_ids_by_key
 
     def _create_challenge_manager(self, challenge_name: str):
@@ -360,9 +368,10 @@ class ScoringApi(BaseScoringApi):
         commit: MinerChallengeCommit,
         target_ids_by_key: dict[str, str],
     ) -> dict:
-        scored_at = commit.scored_timestamp or datetime.datetime.now(
-            datetime.timezone.utc
-        ).timestamp()
+        scored_at = (
+            commit.scored_timestamp
+            or datetime.datetime.now(datetime.timezone.utc).timestamp()
+        )
         raw_score = commit.get_higest_scoring_score()
         final_score = commit.score or 0.0
         penalty_score = commit.penalty or 0.0
@@ -370,7 +379,11 @@ class ScoringApi(BaseScoringApi):
         status = "ACCEPTED" if accepted else "REJECTED"
         first_log = commit.scoring_logs[0] if commit.scoring_logs else ScoringLog()
 
-        reason = "Accepted by centralized scorer" if accepted else "Rejected by centralized scorer"
+        reason = (
+            "Accepted by centralized scorer"
+            if accepted
+            else "Rejected by centralized scorer"
+        )
         if first_log.error:
             reason = first_log.error[:256]
 
@@ -391,14 +404,20 @@ class ScoringApi(BaseScoringApi):
             validation_outputs.append(
                 {
                     "check_name": "challenge-validation",
-                    "is_valid": bool(first_log.validation_output.get("is_valid", False))
-                    if isinstance(first_log.validation_output, dict)
-                    else False,
-                    "reason": json.dumps(first_log.validation_output, default=str)[:1024],
+                    "is_valid": (
+                        bool(first_log.validation_output.get("is_valid", False))
+                        if isinstance(first_log.validation_output, dict)
+                        else False
+                    ),
+                    "reason": json.dumps(first_log.validation_output, default=str)[
+                        :1024
+                    ],
                     "failed_at": None if accepted else _utc_iso(scored_at),
-                    "meta": first_log.validation_output
-                    if isinstance(first_log.validation_output, dict)
-                    else {"value": first_log.validation_output},
+                    "meta": (
+                        first_log.validation_output
+                        if isinstance(first_log.validation_output, dict)
+                        else {"value": first_log.validation_output}
+                    ),
                 }
             )
 
@@ -478,9 +497,11 @@ class ScoringApi(BaseScoringApi):
     ) -> list[dict]:
         commits = [self._work_item_to_commit(item) for item in work_items]
         commits.sort(
-            key=lambda commit: commit.commit_timestamp
-            if commit.commit_timestamp is not None
-            else float("inf")
+            key=lambda commit: (
+                commit.commit_timestamp
+                if commit.commit_timestamp is not None
+                else float("inf")
+            )
         )
         references, target_ids_by_key = self._fetch_reference_commits(challenge_name)
         controller = self.active_challenges[challenge_name]["controller"](
@@ -496,7 +517,9 @@ class ScoringApi(BaseScoringApi):
         manager = self._create_challenge_manager(challenge_name)
         manager.update_miner_scores(controller.miner_commits)
 
-        commits_by_docker_id = {commit.docker_hub_id: commit for commit in controller.miner_commits}
+        commits_by_docker_id = {
+            commit.docker_hub_id: commit for commit in controller.miner_commits
+        }
         results = []
         for item in work_items:
             docker_hub_id = _docker_hub_id_from_plain_commit(

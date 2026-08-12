@@ -1,5 +1,37 @@
 # Changelog
 
+## v4.1.11-260809 (2026-08-09)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.1.3-260420...v4.1.11-260809
+
+## v4.1.10-260801 (2026-08-01)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.1.3-260420...v4.1.10-260801
+
+## v4.1.8-260717 (2026-07-17)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.1.3-260420...v4.1.8-260717
+
+## v4.1.7-260713 (2026-07-13)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.1.3-260420...v4.1.7-260713
+
 ## v4.1.6-2026-06-24 (2026-06-24)
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->
