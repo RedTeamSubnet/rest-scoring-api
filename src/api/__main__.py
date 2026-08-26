@@ -567,7 +567,6 @@ class ScoringApi(BaseScoringApi):
             miner_commits=_sorted_new_miner_commits,
             reference_comparison_commits=_accepted_commits,
             challenge_info=self.active_challenges[challenge],
-            seed_inputs=seed_inputs,
         )
         # Run challenge controller, the controller update commit 's scoring logs and reference comparison logs directly
         controller.start_challenge()
