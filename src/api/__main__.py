@@ -426,41 +426,61 @@ class ScoringApi(BaseScoringApi):
         )
         for challenge in revealed_commits:
             if revealed_commits[challenge]:
-                # Score and compare new commits
-                self._score_and_compare_new_miner_commits(
-                    challenge=challenge,
-                    revealed_commits_list=revealed_commits[challenge],
+                # Keep comparison semantics stable: batches compare only against
+                # commits accepted before this forward pass.
+                reference_comparison_commits = self._get_accepted_challenge_commits(
+                    challenge_name=challenge
                 )
+                commits = revealed_commits[challenge]
+                batch_count = min(len(commits), 3)
+                batch_size = (len(commits) + batch_count - 1) // batch_count
 
-                # Update cache
-                for commit in revealed_commits[challenge]:
-                    self.scoring_results.set(
-                        challenge=challenge,
-                        docker_hub_id=commit.docker_hub_id,
-                        result={
-                            "scoring_logs": commit.scoring_logs,
-                            "comparison_logs": commit.comparison_logs,
-                            "scored_timestamp": commit.scored_timestamp,
-                        },
+                for batch_number, batch_start in enumerate(
+                    range(0, len(commits), batch_size), start=1
+                ):
+                    batch = commits[batch_start : batch_start + batch_size]
+                    bt.logging.info(
+                        f"[CENTRALIZED SCORING] Scoring batch {batch_number}/{batch_count} "
+                        f"({len(batch)} commits) for challenge: {challenge}"
                     )
+                    self._score_and_compare_new_miner_commits(
+                        challenge=challenge,
+                        revealed_commits_list=batch,
+                        reference_comparison_commits=reference_comparison_commits,
+                    )
+                    self._store_scored_batch(challenge=challenge, commits=batch)
 
                 bt.logging.info(
                     f"[CENTRALIZED SCORING] Scoring for challenge: {challenge} has been completed"
                 )
-
-                # Store commits and scoring cache from this challenge
-                self._store_miner_commits(
-                    miner_commits={challenge: revealed_commits[challenge]}
-                )
-                self._store_centralized_scoring(challenge_name=challenge)
 
         # Store scoring API state, this can be viewed by other validators, so we need to make it public view
         self.storage_manager.update_validator_state(
             data=self.export_state(public_view=True), async_update=True
         )
 
+    def _store_scored_batch(
+        self, challenge: str, commits: list[MinerChallengeCommit]
+    ) -> None:
+        """Persist one completed scoring batch before starting the next one."""
+        for commit in commits:
+            self.scoring_results.set(
+                challenge=challenge,
+                docker_hub_id=commit.docker_hub_id,
+                result={
+                    "scoring_logs": commit.scoring_logs,
+                    "comparison_logs": commit.comparison_logs,
+                    "scored_timestamp": commit.scored_timestamp,
+                },
+            )
+        self._store_miner_commits(miner_commits={challenge: commits})
+        self._store_centralized_scoring(challenge_name=challenge)
+
     def _score_and_compare_new_miner_commits(
-        self, challenge: str, revealed_commits_list: list[MinerChallengeCommit]
+        self,
+        challenge: str,
+        revealed_commits_list: list[MinerChallengeCommit],
+        reference_comparison_commits: list[MinerChallengeCommit] | None = None,
     ):
         """
         Score and do comparison for new miner commits for a specific challenge.
@@ -492,13 +512,8 @@ class ScoringApi(BaseScoringApi):
             )
             return
 
-        # 1. Look up cached results for already scored commits, use cached results for already scored commits
-        # Also construct input seeds for new commits, this will be using input from commits that in the same revealed list for comparison
-        # We do this since commits being in the same revealed list means that they will be scored in same day
+        # 1. Restore cached results for commits already scored in a prior batch.
         new_commits: list[MinerChallengeCommit] = []
-        seed_inputs: list[dict] = []
-
-        input_seed_hashes_set: set[str] = set()
         for commit in revealed_commits_list:
             if commit.docker_hub_id in self.scoring_results.get_all_for_challenge(
                 challenge
@@ -512,14 +527,6 @@ class ScoringApi(BaseScoringApi):
                 if cached_result.get("scored_timestamp"):
                     commit.scored_timestamp = cached_result["scored_timestamp"]
 
-                # Add input seed hash to set
-                for scoring_log in commit.scoring_logs:
-                    if (
-                        scoring_log.input_hash
-                        and scoring_log.input_hash not in input_seed_hashes_set
-                    ):
-                        input_seed_hashes_set.add(scoring_log.input_hash)
-                        seed_inputs.append(scoring_log.miner_input)
             else:
                 new_commits.append(commit)
 
@@ -555,8 +562,10 @@ class ScoringApi(BaseScoringApi):
             f"[CENTRALIZED SCORING] Going to score {len(_sorted_new_miner_commits)} commits for challenge: {challenge}"
         )
         self.miners_docker_info = self._fetch_miners_docker_info_from_storage()
-        _accepted_commits = self._get_accepted_challenge_commits(
-            challenge_name=challenge
+        _accepted_commits = (
+            reference_comparison_commits
+            if reference_comparison_commits is not None
+            else self._get_accepted_challenge_commits(challenge_name=challenge)
         )
         # This challenge controll will run with new inputs and reference commit input
         # Reference commits are collected from yesterday, so if same docker_hub_id commited same day, they can share comparison_logs field, and of course, scoring_logs field
