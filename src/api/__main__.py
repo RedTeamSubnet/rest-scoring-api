@@ -432,8 +432,8 @@ class ScoringApi(BaseScoringApi):
                     challenge_name=challenge
                 )
                 commits = revealed_commits[challenge]
-                batch_count = min(len(commits), 3)
-                batch_size = (len(commits) + batch_count - 1) // batch_count
+                batch_size = 3
+                batch_count = (len(commits) + batch_size - 1) // batch_size
 
                 for batch_number, batch_start in enumerate(
                     range(0, len(commits), batch_size), start=1
