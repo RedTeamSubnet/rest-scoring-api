@@ -6,6 +6,14 @@ hide:
 
 # 📌 Release Notes
 
+## v4.2.0-260910 (2026-09-10)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/RedTeamSubnet/rest-scoring-api/compare/v4.1.3-260420...v4.2.0-260910
+
 ## v4.1.12-260826 (2026-08-26)
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->
