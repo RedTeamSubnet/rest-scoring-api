@@ -431,16 +431,19 @@ class ScoringApi(BaseScoringApi):
                 reference_comparison_commits = self._get_accepted_challenge_commits(
                     challenge_name=challenge
                 )
-                commits = revealed_commits[challenge]
+                commits = sorted(
+                    revealed_commits[challenge],
+                    key=lambda commit: (
+                        commit.commit_timestamp
+                        if commit.commit_timestamp
+                        else float("inf")
+                    ),
+                )
                 batch_size = 3
-                batch_count = (len(commits) + batch_size - 1) // batch_size
-
-                for batch_number, batch_start in enumerate(
-                    range(0, len(commits), batch_size), start=1
-                ):
-                    batch = commits[batch_start : batch_start + batch_size]
+                for batch_index in range(0, len(commits), batch_size):
+                    batch = commits[batch_index : batch_index + batch_size]
                     bt.logging.info(
-                        f"[CENTRALIZED SCORING] Scoring batch {batch_number}/{batch_count} "
+                        f"[CENTRALIZED SCORING] Scoring batch {len(batch)}/{len(commits)} "
                         f"({len(batch)} commits) for challenge: {challenge}"
                     )
                     self._score_and_compare_new_miner_commits(
@@ -540,14 +543,8 @@ class ScoringApi(BaseScoringApi):
             )
             return
         else:
-            _sorted_new_miner_commits = sorted(
-                new_commits,
-                key=lambda x: (
-                    x.commit_timestamp if x.commit_timestamp else float("inf")
-                ),
-            )
             bt.logging.info(
-                f"[CENTRALIZED SCORING] {len(_sorted_new_miner_commits)} new commits to score for challenge: {challenge}"
+                f"[CENTRALIZED SCORING] {len(new_commits)} new commits to score for challenge: {challenge}"
             )
 
         bt.logging.info(
@@ -559,7 +556,7 @@ class ScoringApi(BaseScoringApi):
             f"[CENTRALIZED SCORING] Running controller for challenge: {challenge}"
         )
         bt.logging.info(
-            f"[CENTRALIZED SCORING] Going to score {len(_sorted_new_miner_commits)} commits for challenge: {challenge}"
+            f"[CENTRALIZED SCORING] Going to score {len(new_commits)} commits for challenge: {challenge}"
         )
         self.miners_docker_info = self._fetch_miners_docker_info_from_storage()
         _accepted_commits = (
@@ -573,7 +570,7 @@ class ScoringApi(BaseScoringApi):
         controller = self.active_challenges[challenge]["controller"](
             challenge_name=challenge,
             miners_docker_info=self.miners_docker_info,
-            miner_commits=_sorted_new_miner_commits,
+            miner_commits=new_commits,
             reference_comparison_commits=_accepted_commits,
             challenge_info=self.active_challenges[challenge],
         )
