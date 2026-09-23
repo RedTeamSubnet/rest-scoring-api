@@ -10,7 +10,7 @@ from redteam_core.validator.models import (
     ScoringLog,
     ComparisonLog,
 )
-import docker_utils
+from . import docker_utils
 from redteam_core.config.main import constants
 
 
