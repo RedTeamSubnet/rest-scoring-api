@@ -17,6 +17,7 @@ from ._base import BaseScoringApi
 from .core_api import CoreApiClient
 from .router import start_ping_server
 from .seen_commits import SeenCommits
+from .challenge.controller import Controller
 
 load_dotenv(".env", override=True)
 
@@ -274,14 +275,14 @@ class ScoringApi(BaseScoringApi):
                                 "[CORE] Failed to load Docker registry: "
                                 f"{traceback.format_exc()}"
                             )
-                    controller = self.active_challenges[challenge_name]["controller"](
+                    controller = Controller(
                         challenge_name=challenge_name,
                         miners_docker_info=self.miners_docker_info,
                         miner_commits=commits,
                         reference_comparison_commits=references,
                         challenge_info=self.active_challenges[challenge_name],
                     )
-                    # controller.start_challenge()
+                    controller.start_challenge()
                     self.challenge_managers[challenge_name].update_miner_scores(
                         controller.miner_commits
                     )
