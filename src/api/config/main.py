@@ -1,5 +1,5 @@
 import os
-from typing_extensions import Optional, Self
+from typing_extensions import Self
 from pydantic import Field, model_validator
 from pydantic_settings import SettingsConfigDict
 
@@ -7,6 +7,15 @@ from redteam_core.config import BaseConfig, ENV_PREFIX_SCORING_API
 
 
 class ScoringApiMainConfig(BaseConfig):
+    CORE_API_URL: str = Field(
+        default="",
+        description="Base URL for rest-core-api submission reads",
+    )
+    CORE_API_KEY: str = Field(
+        default="",
+        description="X-API-KEY used for rest-core-api requests",
+        repr=False,
+    )
     WALLET_DIR: str = Field(
         default="~/.bittensor/wallets", description="Directory where wallets are stored"
     )
