@@ -9,12 +9,7 @@ import requests
 
 
 class CoreApiClient:
-    """Read-only rest-core client.
-
-    The scorer deliberately owns no core state transitions yet.  Keeping this
-    client read-only makes that boundary explicit until result write-back is
-    introduced.
-    """
+    """Synchronous rest-core client used by the scorer."""
 
     def __init__(self, base_url: str, api_key: str, *, timeout: float = 30.0):
         if not base_url:
@@ -38,6 +33,27 @@ class CoreApiClient:
         if not isinstance(payload, dict):
             raise ValueError(f"Unexpected core response for {path}")
         return payload
+
+    def create(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+        payload = self._request("POST", path, json=data)
+        item = payload.get("data", payload)
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError(f"Core did not return a created resource ID for {path}")
+        return item
+
+    def update(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+        payload = self._request("PUT", path, json=data)
+        item = payload.get("data", payload)
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError(f"Core did not return an updated resource ID for {path}")
+        return item
+
+    def patch(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+        payload = self._request("PATCH", path, json=data)
+        item = payload.get("data", payload)
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError(f"Core did not return an updated resource ID for {path}")
+        return item
 
     @staticmethod
     def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -73,6 +89,17 @@ class CoreApiClient:
         if expands:
             params["expands"] = expands
         return self._paginate("/commits/", params)
+
+    def list_commit_results(self, commit_id: str) -> Iterator[dict[str, Any]]:
+        return self._paginate("/commit-results/", {"commit_id": commit_id})
+
+    def list_commit_validations(
+        self, commit_result_id: str, check_name: str
+    ) -> Iterator[dict[str, Any]]:
+        return self._paginate(
+            "/commit-validation-outputs/",
+            {"commit_result_id": commit_result_id, "check_name": check_name},
+        )
 
     def list_challenges(self) -> Iterator[dict[str, Any]]:
         return self._paginate("/challenges/")
