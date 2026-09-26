@@ -128,6 +128,20 @@ class CoreApiClient:
             "/commit-files/", {"commit_id": commit_id, "include_data": True}
         )
 
+    def list_commit_outputs(self, commit_id: str) -> Iterator[dict[str, Any]]:
+        return self._paginate("/commit-outputs/", {"commit_id": commit_id})
+
+    def list_commit_comparisons(
+        self, source_commit_id: str, target_commit_id: str
+    ) -> Iterator[dict[str, Any]]:
+        return self._paginate(
+            "/commit-comparisons/",
+            {
+                "source_commit_id": source_commit_id,
+                "target_commit_id": target_commit_id,
+            },
+        )
+
     def list_miner_docker_registries(self, neuron_id: str) -> Iterator[dict[str, Any]]:
         return self._paginate("/miner-docker-registries/", {"neuron_id": neuron_id})
 
