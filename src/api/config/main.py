@@ -7,6 +7,12 @@ from redteam_core.config import BaseConfig, ENV_PREFIX_SCORING_API
 
 
 class ScoringApiMainConfig(BaseConfig):
+    PORT: int = Field(
+        default=8000,
+        ge=1,
+        le=65535,
+        description="Port used by the scoring API health server",
+    )
     CORE_API_URL: str = Field(
         default="",
         description="Base URL for rest-core-api submission reads",
