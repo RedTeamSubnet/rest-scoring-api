@@ -1,32 +1,68 @@
-import datetime
+import base64
+import json
 import os
+import re
 import threading
 import time
 import traceback
 from copy import deepcopy
 
 import bittensor as bt
+import yaml
 from dotenv import load_dotenv
-
-from redteam_core.challenge_pool import ACTIVE_CHALLENGES
-from redteam_core.config import ENV_PREFIX_SCORING_API
-from redteam_core.validator import ChallengeManager
-from redteam_core.validator.models import MinerChallengeCommit
 
 from ._base import BaseScoringApi
 from .core_api import CoreApiClient
+from .commit_context import (
+    CommitContext,
+    ReferenceCommit,
+    ScoringCommit,
+    ScoringWorkItem,
+)
+from .result_publisher import ResultPublisher
 from .router import start_ping_server
-from .seen_commits import SeenCommits
-from .challenge.controller import Controller
+from .challenge.main import Controller
+from .utils.helpers import get_docker_hub_id
 
 load_dotenv(".env", override=True)
 
-SCORING_API_PORT = int(os.getenv(f"{ENV_PREFIX_SCORING_API}PORT", 8000))
-_BATCH_SIZE = 3
+
+_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_environment_variables(value):
+    """Expand only ${NAME} placeholders, including in nested config values."""
+    if isinstance(value, dict):
+        return {key: _expand_environment_variables(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_environment_variables(item) for item in value]
+    if isinstance(value, str) and "${" in value:
+        return _ENV_PLACEHOLDER_RE.sub(
+            lambda match: os.environ.get(match.group(1), match.group(0)), value
+        )
+    return value
+
+
+def _format_challenge_container_environment(challenge_info: dict) -> None:
+    """Normalize structured Docker environment values to JSON strings."""
+    run_kwargs = challenge_info.get("challenge_container_run_kwargs", {})
+    environment = run_kwargs.get("environment")
+    if not isinstance(environment, dict):
+        return
+
+    for key, value in environment.items():
+        structured_value = value
+        if isinstance(value, str):
+            try:
+                structured_value = yaml.safe_load(value)
+            except yaml.YAMLError:
+                pass
+        if isinstance(structured_value, (dict, list)):
+            environment[key] = json.dumps(structured_value, separators=(",", ":"))
 
 
 class ScoringApi(BaseScoringApi):
-    """Score unseen queued rest-core submissions once per configured epoch."""
+    """Score queued rest-core submissions one commit at a time."""
 
     def __init__(self):
         super().__init__()
@@ -36,127 +72,64 @@ class ScoringApi(BaseScoringApi):
             base_url=self.scoring_api_config.CORE_API_URL,
             api_key=self.scoring_api_config.CORE_API_KEY,
         )
-        self.seen_commits = SeenCommits(self.scoring_api_config.CACHE_DIR)
-        self.challenge_managers: dict[str, ChallengeManager] = {}
+        self.result_publisher = ResultPublisher(self.core_api)
         self.active_challenges: dict = {}
-        self.miners_docker_info: dict[str, dict] = {}
+        self.active_challenge_ids: dict[str, str] = {}
 
         self._init_active_challenges()
-        self._initialize_seen_commits()
 
     def _init_active_challenges(self) -> None:
-        """Refresh challenge controllers against the latest metagraph."""
-        self.active_challenges = deepcopy(ACTIVE_CHALLENGES)
-        for challenge_name, challenge_info in self.active_challenges.items():
-            if challenge_name not in self.challenge_managers:
-                self.challenge_managers[challenge_name] = challenge_info[
-                    "challenge_manager"
-                ](
-                    challenge_info=challenge_info,
-                    metagraph=self.metagraph,
-                )
-        self.challenge_managers = {
-            challenge_name: self.challenge_managers[challenge_name]
-            for challenge_name in self.active_challenges
-        }
+        """Refresh active challenge configs from rest-core storage."""
+        active_challenges: dict[str, dict] = {}
+        active_challenge_ids: dict[str, str] = {}
 
-    def _initialize_seen_commits(self) -> None:
-        """Seed durable dedupe state from every commit already in rest-core."""
-        count = 0
-        try:
-            for core_commit in self.core_api.list_commits():
-                challenge_id = core_commit.get("challenge_id")
-                cipher_commit = core_commit.get("cipher_commit")
-                if isinstance(challenge_id, str) and isinstance(cipher_commit, str):
-                    self.seen_commits.add(challenge_id, cipher_commit)
-                    count += 1
-            self.seen_commits.save()
-            bt.logging.success(f"[CORE INIT] Seeded seen cache from {count} commits")
-        except Exception:
-            bt.logging.error(
-                f"[CORE INIT] Failed to seed seen cache: {traceback.format_exc()}"
+        for challenge in self.core_api.list_challenges(expands=["config"]):
+            if challenge.get("end_at") is not None:
+                continue
+
+            challenge_id = challenge.get("id")
+            challenge_name = challenge.get("name")
+            expanded_config = challenge.get("config")
+            spec = (
+                expanded_config.get("spec")
+                if isinstance(expanded_config, dict)
+                else None
             )
+            if not (
+                isinstance(challenge_id, str)
+                and isinstance(challenge_name, str)
+                and isinstance(spec, dict)
+            ):
+                bt.logging.warning(
+                    "[CORE] Skipping active challenge with missing ID, name, or config spec"
+                )
+                continue
 
-    @staticmethod
-    def _core_timestamp(value: object) -> float | None:
-        if not isinstance(value, str):
-            return None
-        try:
-            return datetime.datetime.fromisoformat(
-                value.replace("Z", "+00:00")
-            ).timestamp()
-        except ValueError:
-            return None
+            challenge_info = _expand_environment_variables(deepcopy(spec))
+            _format_challenge_container_environment(challenge_info)
+            challenge_info.setdefault("name", challenge_name)
+            active_challenges[challenge_name] = challenge_info
+            active_challenge_ids[challenge_id] = challenge_name
 
-    @staticmethod
-    def _docker_hub_id(plain_commit: object) -> str | None:
-        if not isinstance(plain_commit, str) or "---" not in plain_commit:
-            return None
-        _, docker_hub_id = plain_commit.split("---", 1)
-        return docker_hub_id or None
+        self.active_challenges = active_challenges
+        self.active_challenge_ids = active_challenge_ids
 
     def _active_core_challenges(self) -> dict[str, str]:
         """Map rest-core challenge IDs to currently active controller names."""
-        mappings: dict[str, str] = {}
-        for challenge in self.core_api.list_challenges():
-            challenge_id = challenge.get("id")
-            challenge_name = challenge.get("name")
-            if challenge_name in self.active_challenges:
-                mappings[challenge_id] = challenge_name
-        return mappings
+        return dict(self.active_challenge_ids)
 
-    def _core_commit_to_miner_commit(
-        self,
-        core_commit: dict,
-        challenge_name: str,
-        *,
-        require_registered: bool,
-    ) -> tuple[MinerChallengeCommit, str] | None:
-        """Resolve one core commit into the controller's input model."""
-        miner_id = core_commit.get("miner_id")
-        cipher_commit = core_commit.get("cipher_commit")
-        plain_commit = core_commit.get("plain_commit")
-        docker_hub_id = self._docker_hub_id(plain_commit)
-        if (
-            not isinstance(miner_id, str)
-            or not isinstance(cipher_commit, str)
-            or not isinstance(plain_commit, str)
-            or not docker_hub_id
-        ):
-            bt.logging.warning(
-                "[CORE] Skipping commit missing miner, ciphertext, or revealed Docker ID"
-            )
-            return None
-
+    def _registered_miner(self, miner_id: str) -> tuple[int, str] | None:
+        """Return the registered UID and hotkey for a core miner."""
         try:
             neuron = self.core_api.get_neuron(miner_id)
             uid = neuron.get("uid")
             hotkey = neuron.get("hotkey_address")
             if not isinstance(uid, int) or not isinstance(hotkey, str):
                 raise ValueError("neuron is missing UID or hotkey")
-            if require_registered and not list(
-                self.core_api.list_neurons(
-                    uid=uid,
-                    hotkey_address=hotkey,
-                    only_registered=True,
-                )
-            ):
+            if neuron.get("deregistered_at") is not None:
                 bt.logging.info(f"[CORE] Skipping deregistered miner {uid}/{hotkey}")
                 return None
-            return (
-                MinerChallengeCommit(
-                    miner_uid=uid,
-                    miner_hotkey=hotkey,
-                    challenge_name=challenge_name,
-                    docker_hub_id=docker_hub_id,
-                    commit_timestamp=self._core_timestamp(
-                        core_commit.get("committed_at")
-                    ),
-                    encrypted_commit=cipher_commit,
-                    commit=plain_commit,
-                ),
-                miner_id,
-            )
+            return uid, hotkey
         except Exception:
             bt.logging.error(
                 f"[CORE] Failed to resolve commit miner: {traceback.format_exc()}"
@@ -166,10 +139,9 @@ class ScoringApi(BaseScoringApi):
     def _accepted_core_commits(
         self,
         challenge_id: str,
-        challenge_name: str,
-    ) -> list[MinerChallengeCommit]:
-        """Load accepted reference commits and all files attached to each one."""
-        accepted: list[MinerChallengeCommit] = []
+    ) -> list[ReferenceCommit]:
+        """Load accepted reference files and comparison identifiers."""
+        accepted: list[ReferenceCommit] = []
         for core_commit in self.core_api.list_commits(
             state="DONE",
             challenge_id=challenge_id,
@@ -179,28 +151,68 @@ class ScoringApi(BaseScoringApi):
             commit_id = core_commit.get("id")
             if (
                 not isinstance(result, dict)
-                or result.get("accepted") is not True
+                or result.get("status") != "ACCEPTED"
                 or not isinstance(commit_id, str)
             ):
                 continue
             try:
-                file_count = len(list(self.core_api.list_commit_files(commit_id)))
-                bt.logging.debug(
-                    f"[CORE] Loaded {file_count} reference files for {commit_id}"
-                )
+                files = list(self.core_api.list_commit_files(commit_id))
+                commit_files = []
+                for file in files:
+                    content = file.get("data")
+                    if isinstance(content, bytes):
+                        content = content.decode("utf-8")
+                    if not isinstance(content, str):
+                        raise ValueError("commit file data is missing")
+                    size_bytes = file.get("size_bytes")
+                    if (
+                        isinstance(size_bytes, int)
+                        and len(content.encode()) != size_bytes
+                    ):
+                        content = base64.b64decode(content, validate=True).decode(
+                            "utf-8"
+                        )
+                    filename = file.get("orig_filename") or file.get("filename")
+                    if not isinstance(filename, str):
+                        raise ValueError("commit filename is missing")
+                    commit_files.append(
+                        {
+                            "file_name": filename,
+                            "content": content,
+                        }
+                    )
+                if not commit_files:
+                    continue
             except Exception:
                 bt.logging.error(
                     f"[CORE] Failed to fetch files for reference {commit_id}: "
                     f"{traceback.format_exc()}"
                 )
                 continue
-            resolved = self._core_commit_to_miner_commit(
-                core_commit,
-                challenge_name,
-                require_registered=False,
-            )
-            if resolved:
-                accepted.append(resolved[0])
+            miner_id = core_commit.get("miner_id")
+            if not isinstance(miner_id, str):
+                continue
+            try:
+                neuron = self.core_api.get_neuron(miner_id)
+                uid = neuron.get("uid")
+                hotkey = neuron.get("hotkey_address")
+                if not isinstance(uid, int) or not isinstance(hotkey, str):
+                    continue
+                accepted.append(
+                    ReferenceCommit(
+                        commit_id=commit_id,
+                        miner_uid=uid,
+                        miner_hotkey=hotkey,
+                        files=commit_files,
+                        score=float(result.get("evaluated_score") or 0.0),
+                        penalty=float(result.get("penalty_score") or 0.0),
+                    )
+                )
+            except Exception:
+                bt.logging.error(
+                    f"[CORE] Failed to resolve reference {commit_id}: "
+                    f"{traceback.format_exc()}"
+                )
         return accepted
 
     def _docker_info_for(self, miner_id: str, miner_uid: int) -> dict[str, dict]:
@@ -221,83 +233,175 @@ class ScoringApi(BaseScoringApi):
             }
         }
 
+    def _reconcile_result(self, result: dict, commit_id: str) -> None:
+        status = result.get("status")
+        if status in {"ACCEPTED", "REJECTED"}:
+            self.core_api.update(f"/commits/{commit_id}", {"state": "DONE"})
+        elif status == "FAILED":
+            self.core_api.update(f"/commits/{commit_id}", {"state": "FAILED"})
+        else:
+            bt.logging.info(
+                f"[CORE] Commit {commit_id} already has result status {status}; skipping"
+            )
+
+    def _prepare_work_item(
+        self, core_commit: dict, challenge_name: str
+    ) -> ScoringWorkItem | None:
+        commit_id = core_commit.get("id")
+        challenge_id = core_commit.get("challenge_id")
+        miner_id = core_commit.get("miner_id")
+        if not all(
+            isinstance(value, str) for value in (commit_id, challenge_id, miner_id)
+        ):
+            return None
+
+        expanded_result = core_commit.get("commit_result")
+        if isinstance(expanded_result, dict):
+            self._reconcile_result(expanded_result, commit_id)
+            return None
+
+        cipher_commit = core_commit.get("cipher_commit")
+        docker_hub_id = get_docker_hub_id(core_commit.get("plain_commit"))
+        if not isinstance(cipher_commit, str) or not docker_hub_id:
+            bt.logging.warning(
+                "[CORE] Skipping commit missing ciphertext or revealed Docker ID"
+            )
+            return None
+        identity = self._registered_miner(miner_id)
+        if identity is None:
+            return None
+        uid, hotkey = identity
+        commit = ScoringCommit(
+            miner_uid=uid,
+            miner_hotkey=hotkey,
+            challenge_name=challenge_name,
+            docker_hub_id=docker_hub_id,
+            encrypted_commit=cipher_commit,
+        )
+        try:
+            result, created = self.result_publisher.get_or_create_result(
+                commit_id, miner_id
+            )
+        except Exception:
+            self.core_api.update(f"/commits/{commit_id}", {"state": "FAILED"})
+            raise
+        if not created:
+            self._reconcile_result(result, commit_id)
+            return None
+        item = ScoringWorkItem(
+            commit=commit,
+            context=CommitContext(commit_id, result["id"], challenge_id, miner_id),
+        )
+        try:
+            self.result_publisher.start_result(result["id"])
+        except Exception as exc:
+            self._fail_work_item(item, str(exc))
+            return None
+        return item
+
+    def _score_work_item(self, item: ScoringWorkItem, challenge_name: str) -> None:
+        challenge_info = self.active_challenges[challenge_name]
+        commit = item.commit
+        try:
+            references = self._accepted_core_commits(item.context.challenge_id)
+            try:
+                docker_info = self._docker_info_for(
+                    item.context.miner_id, commit.miner_uid
+                )
+            except Exception:
+                bt.logging.error(
+                    f"[CORE] Failed to load Docker registry: {traceback.format_exc()}"
+                )
+                docker_info = {}
+            controller = Controller(
+                challenge_name=challenge_name,
+                challenge_info=challenge_info,
+                work_item=item,
+                reference_comparison_commits=references,
+                miners_docker_info=docker_info,
+                result_publisher=self.result_publisher,
+            )
+            controller.start_challenge()
+            if controller.failed:
+                raise RuntimeError("Miner scoring failed")
+            if commit.score is None or commit.accepted is None:
+                raise ValueError("Scoring produced no final result")
+        except Exception as exc:
+            bt.logging.error(f"[CORE] Scoring failed: {traceback.format_exc()}")
+            self._fail_work_item(item, str(exc))
+            return
+
+        try:
+            self.result_publisher.finish_result(
+                item.context,
+                accepted=commit.accepted,
+                evaluated_score=commit.get_higest_scoring_score(),
+                score=commit.score,
+                penalty=commit.penalty or 0.0,
+            )
+        except Exception as exc:
+            bt.logging.error(
+                f"[CORE] Failed to publish result: {traceback.format_exc()}"
+            )
+            self._fail_work_item(item, str(exc))
+            return
+        try:
+            self.core_api.update(
+                f"/commits/{item.context.commit_id}", {"state": "DONE"}
+            )
+        except Exception:
+            bt.logging.error(
+                f"[CORE] Failed to finalize commit: {traceback.format_exc()}"
+            )
+
+    def _fail_work_item(self, item: ScoringWorkItem, error: str) -> None:
+        try:
+            self.result_publisher.fail_result(item.context, error)
+        except Exception:
+            bt.logging.error(
+                f"[CORE] Failed to publish error: {traceback.format_exc()}"
+            )
+        try:
+            self.core_api.update(
+                f"/commits/{item.context.commit_id}", {"state": "FAILED"}
+            )
+        except Exception:
+            bt.logging.error(
+                f"[CORE] Failed to mark commit FAILED: {traceback.format_exc()}"
+            )
+
     def forward(self) -> None:
-        """Fetch unseen queued commits from core and score them in small batches."""
+        """Score queued commits sequentially; rest-core result status tracks progress."""
         self._init_active_challenges()
         try:
             challenge_names = self._active_core_challenges()
-            queued_by_challenge: dict[str, list[tuple[MinerChallengeCommit, str]]] = {}
-            for core_commit in self.core_api.list_commits(state="QUEUED"):
-                challenge_id = core_commit.get("challenge_id")
-                cipher_commit = core_commit.get("cipher_commit")
-                if (
-                    not isinstance(challenge_id, str)
-                    or not isinstance(cipher_commit, str)
-                    or challenge_id not in challenge_names
-                    or self.seen_commits.contains(challenge_id, cipher_commit)
-                ):
+            for core_commit in self.core_api.list_commits(
+                state="QUEUED", expands=["commit_result"]
+            ):
+                challenge_name = challenge_names.get(core_commit.get("challenge_id"))
+                if challenge_name is None:
                     continue
-
-                # Deliberate policy: once fetched, a commit is never retried
-                # automatically, including registration/controller failures.
-                self.seen_commits.add(challenge_id, cipher_commit)
-                self.seen_commits.save()
-                resolved = self._core_commit_to_miner_commit(
-                    core_commit,
-                    challenge_names[challenge_id],
-                    require_registered=True,
-                )
-                if resolved:
-                    queued_by_challenge.setdefault(challenge_id, []).append(resolved)
-
-            if not queued_by_challenge:
-                bt.logging.info("[CORE] No unseen queued commits")
-                return
-
-            for challenge_id, queued in queued_by_challenge.items():
-                challenge_name = challenge_names[challenge_id]
-                references = self._accepted_core_commits(
-                    challenge_id,
-                    challenge_name,
-                )
-                for batch_start in range(0, len(queued), _BATCH_SIZE):
-                    batch = queued[batch_start : batch_start + _BATCH_SIZE]
-                    commits = [commit for commit, _ in batch]
-                    self.challenge_managers[challenge_name].update_miner_infos(commits)
-                    self.miners_docker_info = {}
-                    for commit, miner_id in batch:
-                        try:
-                            self.miners_docker_info.update(
-                                self._docker_info_for(miner_id, commit.miner_uid)
-                            )
-                        except Exception:
-                            bt.logging.error(
-                                "[CORE] Failed to load Docker registry: "
-                                f"{traceback.format_exc()}"
-                            )
-                    controller = Controller(
-                        challenge_name=challenge_name,
-                        miners_docker_info=self.miners_docker_info,
-                        miner_commits=commits,
-                        reference_comparison_commits=references,
-                        challenge_info=self.active_challenges[challenge_name],
-                    )
-                    controller.start_challenge()
-                    self.challenge_managers[challenge_name].update_miner_scores(
-                        controller.miner_commits
+                try:
+                    item = self._prepare_work_item(core_commit, challenge_name)
+                    if item is not None:
+                        self._score_work_item(item, challenge_name)
+                except Exception:
+                    bt.logging.error(
+                        f"[CORE] Commit processing failed: {traceback.format_exc()}"
                     )
         except Exception:
             bt.logging.error(f"[CORE] Forward failed: {traceback.format_exc()}")
 
 
 if __name__ == "__main__":
+    app = ScoringApi()
     server_thread = threading.Thread(
         target=start_ping_server,
-        args=(SCORING_API_PORT,),
+        args=(app.scoring_api_config.PORT,),
         daemon=True,
     )
     server_thread.start()
-    with ScoringApi() as app:
+    with app:
         while True:
             bt.logging.info("ScoringApi is running...")
             time.sleep(app.config.EPOCH_LENGTH // 4)
