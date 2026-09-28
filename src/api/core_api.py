@@ -101,20 +101,15 @@ class CoreApiClient:
             {"commit_result_id": commit_result_id, "check_name": check_name},
         )
 
-    def list_challenges(self) -> Iterator[dict[str, Any]]:
-        return self._paginate("/challenges/")
-
-    def list_neurons(
-        self, *, uid: int, hotkey_address: str, only_registered: bool = True
+    def list_challenges(
+        self,
+        *,
+        expands: list[str] | None = None,
     ) -> Iterator[dict[str, Any]]:
-        return self._paginate(
-            "/neurons/",
-            {
-                "uid": uid,
-                "hotkey_address": hotkey_address,
-                "only_registered": only_registered,
-            },
-        )
+        params: dict[str, Any] = {}
+        if expands:
+            params["expands"] = expands
+        return self._paginate("/challenges/", params)
 
     def get_neuron(self, neuron_id: str) -> dict[str, Any]:
         payload = self._request("GET", f"/neurons/{neuron_id}")

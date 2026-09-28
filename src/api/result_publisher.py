@@ -23,7 +23,9 @@ class ResultPublisher:
         )
         return result["id"]
 
-    def get_or_create_result(self, commit_id: str, miner_id: str) -> dict[str, Any]:
+    def get_or_create_result(
+        self, commit_id: str, miner_id: str
+    ) -> tuple[dict[str, Any], bool]:
         existing = next(self.client.list_commit_results(commit_id), None)
         if existing is None:
             try:
@@ -34,14 +36,18 @@ class ResultPublisher:
                 if existing is None:
                     raise
             else:
-                return {"id": result_id, "status": "PENDING", "miner_id": miner_id}
+                return {
+                    "id": result_id,
+                    "status": "PENDING",
+                    "miner_id": miner_id,
+                }, True
         if existing.get("miner_id") != miner_id:
             raise ValueError(f"Commit result miner mismatch for {commit_id}")
         if not isinstance(existing.get("id"), str):
             raise ValueError(f"Commit result has no ID for {commit_id}")
-        return existing
+        return existing, False
 
-    def start_result(self, result_id: str, attempts: int) -> None:
+    def start_result(self, result_id: str) -> None:
         self.client.update(
             f"/commit-results/{result_id}",
             {
@@ -53,7 +59,6 @@ class ResultPublisher:
                 "final_score": 0.0,
                 "evaluated_at": None,
                 "finalized_at": None,
-                "meta": {"attempts": attempts},
             },
         )
 
