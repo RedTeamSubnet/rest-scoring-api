@@ -1,0 +1,205 @@
+import os
+
+import bittensor as bt
+import requests
+from redteam_core.config.main import constants
+from redteam_core.validator.models import ScoringLog
+
+from ..commit_context import ScoringCommit
+
+
+class Scoring:
+    """Generate inputs, run miners, and collect scoring outputs."""
+
+    def start(self, miner_commit: ScoringCommit) -> None:
+        self._generate_scoring_logs(miner_commit)
+
+    def score_new_inputs(self, miner_commit: ScoringCommit) -> None:
+        self._score_miner_with_new_inputs(miner_commit)
+
+    def _generate_scoring_logs(self, miner_commit: ScoringCommit):
+        """Run and score miner with new challenge inputs."""
+        miner_output, error_message = self._submit_challenge_to_miner()
+
+        if miner_output is None or error_message:
+            bt.logging.warning(
+                f"[CONTROLLER - ABSController] Miner {miner_commit.miner_hotkey} \
+                    failed to produce output for reference comparison: {error_message}"
+            )
+            miner_commit.scoring_logs.insert(
+                0,
+                ScoringLog(
+                    miner_output=None,
+                    error=(
+                        f"[Not Accepted] {error_message}"
+                        if error_message
+                        else "[Not Accepted] No output from miner"
+                    ),
+                ),
+            )
+            return
+        commit_files = miner_output.get("commit_files")
+        if not isinstance(commit_files, list):
+            raise ValueError("Miner output must contain a commit_files list")
+        for index, commit_file in enumerate(commit_files):
+            if not isinstance(commit_file, dict):
+                raise ValueError(f"Commit file {index} must be an object")
+            self._store_file(self.context, commit_file, index)
+        miner_commit.scoring_logs.insert(
+            0,
+            ScoringLog(
+                miner_output=miner_output,
+                error=error_message,
+            ),
+        )
+
+    def _submit_challenge_to_miner(self) -> tuple[dict, str]:
+        """
+        Sends the challenge input to a miner by making an HTTP POST request to a local endpoint.
+        The request submits the input, and the miner returns the generated output.
+
+        Args:
+            challenge: The input to be solved by the miner.
+
+        Returns:
+            A dictionary representing the miner's output.
+        """
+
+        error_message = ""
+        try:
+            _protocol, _ssl_verify = self._check_protocol(is_challenger=False)
+            response = requests.post(
+                f"{_protocol}://{self.miner_ip}:{constants.MINER_DOCKER_PORT}/solve",
+                timeout=self.challenge_info.get("challenge_solve_timeout", 60),
+                verify=_ssl_verify,
+                json={},
+            )
+
+            if not response.ok:
+                error_message = f"HTTP {response.status_code}: {response.text}"
+                bt.logging.warning(error_message)
+                return None, error_message
+
+            return response.json(), error_message
+        except requests.exceptions.Timeout:
+            error_message = "Timeout occurred while trying to solve challenge."
+            bt.logging.error(error_message)
+            return None, error_message
+        except Exception as ex:
+            error_message = f"Submit challenge to miner failed: {str(ex)}"
+            bt.logging.error(error_message)
+            return None, error_message
+
+    def _get_challenge_from_container(self) -> dict:
+        """
+        Retrieves a challenge input from the running challenge container by making an HTTP POST request.
+        The challenge container returns a task that will be sent to the miners.
+        Will retry up to 3 times if request fails.
+
+        Returns:
+            A dictionary representing the challenge input.
+
+        Raises:
+            Exception: If all retry attempts fail
+        """
+        _protocol, _ssl_verify = self._check_protocol(is_challenger=True)
+        url = f"{_protocol}://localhost:{constants.CHALLENGE_DOCKER_PORT}/task"
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, verify=_ssl_verify)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise Exception(
+                        f"Failed to get challenge after {max_retries} attempts: {str(e)}"
+                    )
+
+    def _score_challenge(self, miner_output) -> float:
+        """
+        Submits the miner's input and output for scoring by making an HTTP POST request to the challenge container.
+        The challenge container computes a score based on the miner's performance.
+
+        Args:
+            miner_output: The output generated by the miner.
+
+        Returns:
+            A float representing the score for the miner's solution.
+        """
+
+        _protocol, _ssl_verify = self._check_protocol(is_challenger=True)
+
+        try:
+
+            response = requests.post(
+                f"{_protocol}://localhost:{constants.CHALLENGE_DOCKER_PORT}/score",
+                verify=_ssl_verify,
+                json=miner_output,
+                headers=self.challenge_info.get("scoring_headers", {}),
+            )
+
+            score = response.json()
+
+        except Exception as ex:
+            bt.logging.error(f"Score challenge failed: {str(ex)}")
+            score = 0.0
+
+        if isinstance(score, int):
+            score = float(score)
+        elif not isinstance(score, float):
+            score = 0.0
+        return score
+
+    def _score_miner_with_new_inputs(self, miner_commit: ScoringCommit) -> None:
+        """Apply shared similarity gate, then score through the challenge container."""
+        scoring_log = miner_commit.scoring_logs[0]
+        highest_comparison_score = miner_commit.get_higest_comparison_score()
+        if (
+            highest_comparison_score >= self.comparison_min_acceptable_score
+            or highest_comparison_score == 0.0
+        ):
+            bt.logging.info(
+                f"[CONTROLLER] Skipping scoring for miner {miner_commit.miner_hotkey} "
+                f"due to comparison score: {highest_comparison_score}"
+            )
+            scoring_log.score = 0.0
+            message = "Skipped scoring due to high comparison score."
+            scoring_log.error = (
+                f"{scoring_log.error} | {message}" if scoring_log.error else message
+            )
+            return
+
+        miner_output = scoring_log.miner_output
+        scoring_log.score = (
+            self._score_challenge(miner_output=miner_output)
+            if miner_output is not None
+            else 0.0
+        )
+        if miner_output is not None:
+            miner_output["scoring_results"] = self._get_results_from_challenge()
+            self._store_output(self.context, miner_output["scoring_results"])
+            telemetry_path = self.challenge_info.get(
+                "telemetry_path",
+                (
+                    "/telemetry"
+                    if self.challenge_info.get("challenge_type") == "ada"
+                    else None
+                ),
+            )
+            if telemetry_path:
+                miner_output["telemetry"] = self._get_telemetry_from_challenge(
+                    telemetry_path
+                )
+
+    def _get_results_from_challenge(self) -> dict:
+        default_path = (
+            "/results"
+            if self.challenge_info.get("challenge_type") == "ada"
+            else "/result"
+        )
+        path = self.challenge_info.get("results_path", default_path)
+        api_key = os.environ.get("RT_CHALLENGE_API_KEY")
+        headers = {"X-API-Key": api_key} if api_key else {}
+        return self._get_challenge_data(path, headers=headers)
