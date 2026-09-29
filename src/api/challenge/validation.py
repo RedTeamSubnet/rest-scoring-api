@@ -1,10 +1,12 @@
 from dataclasses import dataclass, field
 
-import bittensor as bt
+import logging
 import requests
 from redteam_core.config.main import constants
 
 from ..commit_context import ScoringCommit
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,7 @@ class Validation:
         script_identifier = self.challenge_info.get("script_path_identifier")
         miner_script = miner_output.get(script_identifier)
         if not miner_script:
-            bt.logging.warning(
+            logger.warning(
                 f"[CONTROLLER] Miner {miner_commit.miner_hotkey} "
                 "has no valid script output for validation."
             )
@@ -55,9 +57,9 @@ class Validation:
             data = response.json().get("data", {})
             if not isinstance(data, dict):
                 raise ValueError("Validation response data must be an object")
-            bt.logging.info(f"Validation response data: {data}")
+            logger.info(f"Validation response data: {data}")
         except Exception as exc:
-            bt.logging.error(f"Error in validation request: {exc}")
+            logger.error(f"Error in validation request: {exc}")
             return ValidationOutput({"is_valid": False, "reason": str(exc)})
 
         miner_commit.scoring_logs[0].validation_output = data

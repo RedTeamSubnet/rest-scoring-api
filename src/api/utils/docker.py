@@ -5,11 +5,13 @@ import re
 import subprocess
 import time
 
-import bittensor as bt
+import logging
 import docker
 import docker.models.containers
 import docker.types
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def run_container(
@@ -89,21 +91,21 @@ def create_network(
             client.networks.create(
                 name=network_name, driver="bridge", internal=not allow_internet
             )
-            bt.logging.info(
+            logger.info(
                 f"Network '{network_name}' created successfully with internet access blocked."
             )
         else:
             client.networks.get(network_name)
-            bt.logging.info(f"Network '{network_name}' already exists.")
+            logger.info(f"Network '{network_name}' already exists.")
 
     except docker.errors.APIError as e:
-        bt.logging.error(f"Failed to create/configure network: {e}")
+        logger.error(f"Failed to create/configure network: {e}")
         raise
     except subprocess.CalledProcessError as e:
-        bt.logging.error(f"Failed to set up network isolation rules: {e}")
+        logger.error(f"Failed to set up network isolation rules: {e}")
         raise
     except Exception as e:
-        bt.logging.error(f"Unexpected error creating network: {e}")
+        logger.error(f"Unexpected error creating network: {e}")
         raise
 
 
@@ -136,7 +138,7 @@ def remove_container(
     try:
         containers = client.containers.list(all=True)
     except Exception as e:
-        bt.logging.error(f"Failed to list containers: {str(e)}")
+        logger.error(f"Failed to list containers: {str(e)}")
         return False
 
     target_container = None
@@ -146,42 +148,42 @@ def remove_container(
             break
 
     if not target_container:
-        bt.logging.info(f"Container '{container_name}' not found")
+        logger.info(f"Container '{container_name}' not found")
         return True
 
     # Try to stop container if running
     try:
         target_container.reload()
         if target_container.status != "exited":
-            bt.logging.info(f"Stopping container '{container_name}'")
+            logger.info(f"Stopping container '{container_name}'")
             subprocess.run(
                 ["sudo", "docker", "stop", "-t", str(stop_timeout), container_name],
             )
     except (docker.errors.NotFound, docker.errors.APIError) as e:
-        bt.logging.info(f"Container stop status: {str(e)}")
+        logger.info(f"Container stop status: {str(e)}")
     except Exception as e:
-        bt.logging.warning(f"Error stopping container: {str(e)}")
+        logger.warning(f"Error stopping container: {str(e)}")
 
     # Attempt removal with retries
     for attempt in range(max_retries):
         try:
             # target_container.kill()
             target_container.remove(force=force, v=remove_volumes)
-            bt.logging.info(f"Container '{container_name}' removed successfully")
+            logger.info(f"Container '{container_name}' removed successfully")
             return True
         except (docker.errors.NotFound, docker.errors.APIError) as e:
-            bt.logging.info(f"Container remove attempt {attempt + 1} status: {str(e)}")
+            logger.info(f"Container remove attempt {attempt + 1} status: {str(e)}")
             if isinstance(e, docker.errors.NotFound):
                 return True
         except Exception as e:
-            bt.logging.warning(
+            logger.warning(
                 f"Error removing container (attempt {attempt + 1}/{max_retries}): {str(e)}"
             )
 
         if attempt < max_retries - 1:
             time.sleep(2**attempt)  # Exponential backoff
 
-    bt.logging.error(
+    logger.error(
         f"Failed to remove container '{container_name}' after {max_retries} attempts"
     )
     return False
@@ -201,9 +203,9 @@ def remove_container_by_port(client: docker.DockerClient, port: int) -> None:
             container_ports = container.attrs["NetworkSettings"]["Ports"]
             if any([str(port) in p for p in container_ports]):
                 container.remove(force=True)
-                bt.logging.info(f"Removed container {container.name}")
+                logger.info(f"Removed container {container.name}")
         except Exception as e:
-            bt.logging.error(f"Error processing container {container.name}: {e}")
+            logger.error(f"Error processing container {container.name}: {e}")
 
 
 def clean_docker_resources(
@@ -228,7 +230,7 @@ def clean_docker_resources(
         if remove_containers:
             for container in client.containers.list(all=True):
                 if container.status in ["exited", "dead"]:
-                    bt.logging.info(
+                    logger.info(
                         f"Removing container {container.name} ({container.id})..."
                     )
                     container.remove(force=True)
@@ -242,26 +244,26 @@ def clean_docker_resources(
                 if image.id not in used_image_ids:
                     try:
                         client.images.remove(image.id, force=True)
-                        bt.logging.info(f"Removed: {image.id}")
+                        logger.info(f"Removed: {image.id}")
                     except docker.errors.APIError as e:
-                        bt.logging.info(f"Skipped {image.id}: {e}")
+                        logger.info(f"Skipped {image.id}: {e}")
 
         # Delete unused resources (volumes, build cache)
         if prune_volumes:
-            bt.logging.info("Pruning volumes...")
+            logger.info("Pruning volumes...")
             client.volumes.prune()
 
         if remove_networks:
-            bt.logging.info("Pruning networks...")
+            logger.info("Pruning networks...")
             client.networks.prune()
 
         if prune_builds:
-            bt.logging.info("Pruning build cache...")
+            logger.info("Pruning build cache...")
             client.api.prune_builds()
 
-        bt.logging.info("Docker resources cleaned up successfully")
+        logger.info("Docker resources cleaned up successfully")
     except Exception as e:
-        bt.logging.error(f"Error cleaning Docker resources: {e}")
+        logger.error(f"Error cleaning Docker resources: {e}")
 
 
 def is_image_digest_format_valid(image: str) -> bool:
@@ -276,7 +278,7 @@ def is_image_digest_format_valid(image: str) -> bool:
     """
     digest_pattern = r".+@sha256:[a-fA-F0-9]{64}$"
     if not re.match(digest_pattern, image):
-        bt.logging.error(
+        logger.error(
             f"Invalid image format: {image}. Must include a SHA256 digest."
         )
         return False
@@ -301,15 +303,15 @@ def check_container_alive(
         container.reload()
         if container.status in ["exited", "dead"]:
             container_logs = container.logs().decode("utf-8", errors="ignore")
-            bt.logging.error(
+            logger.error(
                 f"Container {container} failed with status: {container.status}"
             )
-            bt.logging.error(f"Container logs:\n{container_logs}")
+            logger.error(f"Container logs:\n{container_logs}")
             raise RuntimeError(
                 f"Container failed to start. Status: {container.status}. Container logs: {container_logs}"
             )
         else:
-            bt.logging.info(f"Waiting for container to start. {container.status}")
+            logger.info(f"Waiting for container to start. {container.status}")
             time.sleep(5)
 
 

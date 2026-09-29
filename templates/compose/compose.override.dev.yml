@@ -2,7 +2,6 @@ services:
   scoring-api:
     image: redteamsubnet61/rest-scoring-api:latest
     volumes:
-      - "./volumes/storage/sidecar-btcli/data:${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}"
       - "./volumes/storage/rest-scoring-api/data:${RT_SCORING_API_DATA_DIR:-/var/lib/rest-scoring-api}"
       - "./scripts/docker/docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh"
       - "./src:/app/rest-scoring-api"

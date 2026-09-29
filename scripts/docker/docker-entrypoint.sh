@@ -6,43 +6,6 @@ echo "[INFO]: Running '${RT_SCORING_API_SLUG}' docker-entrypoint.sh..."
 
 _run()
 {
-	_i=0
-	while true; do
-		if [ -d "${RT_BTCLI_WALLET_DIR:-${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}/wallets}" ]; then
-			break
-		fi
-
-		echo "[INFO]: Waiting for the wallet directory to be created..."
-		_i=$((_i + 1))
-		if [ "${_i}" -ge 60 ]; then
-			echo "[ERROR]: Timeout waiting for the wallet directory to be created!" >&2
-			exit 1
-		fi
-
-		sleep 1
-	done
-
-	if [ "${ENV:-}" != "PRODUCTION" ] && [ "${ENV:-}" != "STAGING" ]; then
-		_i=0
-		while true; do
-			local _checkpoint_file_path="${RT_BTCLI_DATA_DIR:-/var/lib/sidecar-btcli}/${RT_BTCLI_CHECKPOINT_FNAME:-.checkpoint.txt}"
-			if [ -f "${_checkpoint_file_path}" ]; then
-				local _checkpoint_val=0
-				_checkpoint_val=$(cat "${_checkpoint_file_path}")
-				if [ "${_checkpoint_val}" -ge 4 ]; then
-					break
-				fi
-			fi
-
-			if [ $(( _i % 10 )) -eq 0 ]; then
-				echo "[INFO]: Waiting for the wallets to be registered and ready..."
-			fi
-			_i=$((_i + 1))
-			sleep 1
-		done
-	fi
-
-	sleep 5
 	echo "[INFO]: Starting ${RT_SCORING_API_SLUG}..."
 
 	_docker_group="dockerhost"

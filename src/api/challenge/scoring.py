@@ -1,11 +1,13 @@
 import os
 
-import bittensor as bt
+import logging
 import requests
 from redteam_core.config.main import constants
 from redteam_core.validator.models import ScoringLog
 
 from ..commit_context import ScoringCommit
+
+logger = logging.getLogger(__name__)
 
 
 class Scoring:
@@ -22,7 +24,7 @@ class Scoring:
         miner_output, error_message = self._submit_challenge_to_miner()
 
         if miner_output is None or error_message:
-            bt.logging.warning(
+            logger.warning(
                 f"[CONTROLLER - ABSController] Miner {miner_commit.miner_hotkey} \
                     failed to produce output for reference comparison: {error_message}"
             )
@@ -77,17 +79,17 @@ class Scoring:
 
             if not response.ok:
                 error_message = f"HTTP {response.status_code}: {response.text}"
-                bt.logging.warning(error_message)
+                logger.warning(error_message)
                 return None, error_message
 
             return response.json(), error_message
         except requests.exceptions.Timeout:
             error_message = "Timeout occurred while trying to solve challenge."
-            bt.logging.error(error_message)
+            logger.error(error_message)
             return None, error_message
         except Exception as ex:
             error_message = f"Submit challenge to miner failed: {str(ex)}"
-            bt.logging.error(error_message)
+            logger.error(error_message)
             return None, error_message
 
     def _get_challenge_from_container(self) -> dict:
@@ -143,7 +145,7 @@ class Scoring:
             score = response.json()
 
         except Exception as ex:
-            bt.logging.error(f"Score challenge failed: {str(ex)}")
+            logger.error(f"Score challenge failed: {str(ex)}")
             score = 0.0
 
         if isinstance(score, int):
@@ -160,7 +162,7 @@ class Scoring:
             highest_comparison_score >= self.comparison_min_acceptable_score
             or highest_comparison_score == 0.0
         ):
-            bt.logging.info(
+            logger.info(
                 f"[CONTROLLER] Skipping scoring for miner {miner_commit.miner_hotkey} "
                 f"due to comparison score: {highest_comparison_score}"
             )

@@ -1,4 +1,6 @@
 import os
+from typing import Literal
+
 from typing_extensions import Self
 from pydantic import Field, model_validator
 from pydantic_settings import SettingsConfigDict
@@ -22,22 +24,14 @@ class ScoringApiMainConfig(BaseConfig):
         description="X-API-KEY used for rest-core-api requests",
         repr=False,
     )
-    WALLET_DIR: str = Field(
-        default="~/.bittensor/wallets", description="Directory where wallets are stored"
+    POLL_INTERVAL: int = Field(
+        default=1200,
+        ge=1,
+        description="Seconds between scoring passes",
     )
-    WALLET_NAME: str = Field(
-        default="scoring-api", description="Name of the wallet to use for validation"
-    )
-    HOTKEY_NAME: str = Field(
-        default="default", description="Name of the hotkey to use for validation"
-    )
-    # HOTKEY_ADDRESS: Optional[str] = Field(
-    #     default=None,
-    #     description="SS58 address of the hotkey to use for validation (overrides HOTKEY_NAME if set)",
-    # )
-    UID: int = Field(
-        default=-1,
-        description="UID of the validator (overrides automatic detection if set)",
+    LOGGING_LEVEL: Literal["INFO", "DEBUG", "TRACE"] = Field(
+        default="INFO",
+        description="Application logging level (INFO, DEBUG, or TRACE)",
     )
     CACHE_DIR: str = Field(
         default="/var/lib/rest-scoring-api/cache", description="Cache directory path"

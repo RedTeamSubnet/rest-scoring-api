@@ -18,12 +18,14 @@ from src.api.utils.helpers import get_docker_hub_id
 
 def test_scoring_api_port_comes_from_pydantic_config(monkeypatch, tmp_path):
     monkeypatch.setenv("RT_SCORING_API_PORT", "9123")
+    monkeypatch.setenv("RT_SCORING_API_POLL_INTERVAL", "30")
     config = ScoringApiMainConfig(
         CORE_API_KEY="secret",
         CACHE_DIR=str(tmp_path),
     )
 
     assert config.PORT == 9123
+    assert config.POLL_INTERVAL == 30
 
 
 def test_get_docker_hub_id_parses_revealed_commit():

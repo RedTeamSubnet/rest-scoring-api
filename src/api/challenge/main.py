@@ -1,7 +1,7 @@
 import time
 import traceback
 
-import bittensor as bt
+import logging
 from redteam_core.config.main import constants
 from redteam_core.validator.models import ComparisonLog, ScoringLog
 
@@ -13,6 +13,8 @@ from .finalization import FinalOutput
 from .scoring import Scoring
 from .utils import ChallengeUtils
 from .validation import Validation, ValidationOutput
+
+logger = logging.getLogger(__name__)
 
 
 class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
@@ -94,7 +96,7 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
             },
             **self.challenge_info.get("challenge_container_run_kwargs", {}),
         )
-        bt.logging.info(
+        logger.info(
             f"[CONTROLLER] Challenge container started: {self.challenge_container.status}"
         )
 
@@ -122,7 +124,7 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
                 else:
                     max_comparison_score = self._check_comparison_score(miner_commit)
                     if max_comparison_score >= 0.6:
-                        bt.logging.info(
+                        logger.info(
                             f"[CONTROLLER] Miner {hotkey} has high comparison score "
                             f"{max_comparison_score}, skipping reference comparison."
                         )
@@ -141,10 +143,10 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
                 FinalOutput.start(self, miner_commit)
             except Exception as exc:
                 self.failed = True
-                bt.logging.error(
+                logger.error(
                     f"Error while processing miner {uid} - {hotkey}: {exc}"
                 )
-                bt.logging.error(traceback.format_exc())
+                logger.error(traceback.format_exc())
                 if not miner_commit.scoring_logs:
                     miner_commit.scoring_logs.append(
                         ScoringLog(
@@ -164,7 +166,7 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
                 remove_containers=True,
                 remove_images=True,
             )
-            bt.logging.debug("[CONTROLLER] Challenge completed, cleaning up container")
+            logger.debug("[CONTROLLER] Challenge completed, cleaning up container")
             docker_utils.remove_container(
                 client=self.docker_client,
                 container_name=self.challenge_name,
@@ -189,7 +191,7 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
             port=constants.MINER_DOCKER_PORT,
         )
 
-        bt.logging.info(
+        logger.info(
             f"[CONTROLLER] Running miner {miner_commit.miner_uid} - {miner_commit.docker_hub_id}"
         )
 

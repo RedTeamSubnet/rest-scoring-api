@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Scoring API is a specialized validator node that provides centralized scoring for the RedTeam Subnet (netuid 61). It extends the standard Validator functionality but focuses exclusively on scoring and comparing miner submissions rather than querying miners or setting weights directly.
+The Scoring API is a standalone service that provides centralized scoring for RedTeam challenges. It scores and compares miner submissions received through rest-core without connecting to Subtensor or managing validator weights.
 
 ## Key Features
 
@@ -89,34 +89,17 @@ The scoring API server maintains several important state variables:
 
 ## Setup
 
-Setup steps for the scoring server are the same as the validator node, please refer to the [validator README](../../docs/1.validator.md) for more details.
-
 ### Running the Server
 
 ```bash
-python -u -m src.api \
-    --scoring_api.port 47920 \
-    --scoring_api.epoch_length 60 \
-    --netuid 61 \
-    --subtensor.network <subtensor-endpoint> \
-    --wallet.name <wallet-name> \
-    --wallet.hotkey <hotkey-name> \
-    --validator.cache_dir <cache-dir> \
-    --validator.hf_repo_id <hf-repo-id>
+RT_SCORING_API_CORE_API_URL=http://localhost:8000/api/v1 \
+RT_SCORING_API_CORE_API_KEY=replace-me \
+RT_SCORING_API_PORT=47920 \
+RT_SCORING_API_POLL_INTERVAL=1200 \
+python -u -m src.api
 ```
 
-#### Command Line Arguments
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--scoring_api.port` | Port for the FastAPI server | 47920 |
-| `--scoring_api.epoch_length` | Processing cycle duration (seconds) | 60 |
-| `--netuid` | Subnet ID to connect to | Required |
-| `--subtensor.network` | Subtensor endpoint | Required |
-| `--wallet.name` | Wallet name | Required |
-| `--wallet.hotkey` | Wallet hotkey name | Required |
-| `--validator.cache_dir` | Directory for caching scoring results | `./.cache` |
-| `--validator.hf_repo_id` | Hugging Face repo ID for model weights | `my_username/rest-scoring-api` |
+The service reads scoring settings from `RT_SCORING_API_*` environment variables. It does not require a wallet or Subtensor connection.
 
 ## Integration for Validators
 
@@ -136,9 +119,8 @@ Validators can use the centralized scoring service by:
 
 ### Common Issues
 
-- If scoring results aren't being updated, check network connectivity to storage service
-- Verify that the scoring API has sufficient stake in the metagraph
-- Ensure the SCORING_API_HOTKEY environment variable matches the wallet.hotkey
+- If scoring results aren't being updated, verify the rest-core URL and API key
+- Ensure the service can access the Docker daemon and required challenge images
 
 ### Security Considerations
 

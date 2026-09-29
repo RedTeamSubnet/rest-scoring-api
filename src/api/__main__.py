@@ -1,9 +1,8 @@
 import base64
 import threading
-import time
 import traceback
 
-import bittensor as bt
+import logging
 from dotenv import load_dotenv
 
 from ._base import BaseScoringApi
@@ -20,6 +19,8 @@ from .challenge.main import Controller
 from .utils.challenge_info import prepare_challenge_info
 from .utils.helpers import get_docker_hub_id
 
+logger = logging.getLogger(__name__)
+
 load_dotenv(".env", override=True)
 
 
@@ -28,8 +29,6 @@ class ScoringApi(BaseScoringApi):
 
     def __init__(self):
         super().__init__()
-        self.hotkey = self.wallet.hotkey.ss58_address
-        self.uid = self.scoring_api_config.UID
         self.core_api = CoreApiClient(
             base_url=self.scoring_api_config.CORE_API_URL,
             api_key=self.scoring_api_config.CORE_API_KEY,
@@ -62,7 +61,7 @@ class ScoringApi(BaseScoringApi):
                 and isinstance(challenge_name, str)
                 and isinstance(spec, dict)
             ):
-                bt.logging.warning(
+                logger.warning(
                     "[CORE] Skipping active challenge with missing ID, name, or config spec"
                 )
                 continue
@@ -88,11 +87,11 @@ class ScoringApi(BaseScoringApi):
             if not isinstance(uid, int) or not isinstance(hotkey, str):
                 raise ValueError("neuron is missing UID or hotkey")
             if neuron.get("deregistered_at") is not None:
-                bt.logging.info(f"[CORE] Skipping deregistered miner {uid}/{hotkey}")
+                logger.info(f"[CORE] Skipping deregistered miner {uid}/{hotkey}")
                 return None
             return uid, hotkey
         except Exception:
-            bt.logging.error(
+            logger.error(
                 f"[CORE] Failed to resolve commit miner: {traceback.format_exc()}"
             )
             return None
@@ -145,7 +144,7 @@ class ScoringApi(BaseScoringApi):
                 if not commit_files:
                     continue
             except Exception:
-                bt.logging.error(
+                logger.error(
                     f"[CORE] Failed to fetch files for reference {commit_id}: "
                     f"{traceback.format_exc()}"
                 )
@@ -170,7 +169,7 @@ class ScoringApi(BaseScoringApi):
                     )
                 )
             except Exception:
-                bt.logging.error(
+                logger.error(
                     f"[CORE] Failed to resolve reference {commit_id}: "
                     f"{traceback.format_exc()}"
                 )
@@ -201,7 +200,7 @@ class ScoringApi(BaseScoringApi):
         elif status == "FAILED":
             self.core_api.update(f"/commits/{commit_id}", {"state": "FAILED"})
         else:
-            bt.logging.info(
+            logger.info(
                 f"[CORE] Commit {commit_id} already has result status {status}; skipping"
             )
 
@@ -224,7 +223,7 @@ class ScoringApi(BaseScoringApi):
         cipher_commit = core_commit.get("cipher_commit")
         docker_hub_id = get_docker_hub_id(core_commit.get("plain_commit"))
         if not isinstance(cipher_commit, str) or not docker_hub_id:
-            bt.logging.warning(
+            logger.warning(
                 "[CORE] Skipping commit missing ciphertext or revealed Docker ID"
             )
             return None
@@ -270,7 +269,7 @@ class ScoringApi(BaseScoringApi):
                     item.context.miner_id, commit.miner_uid
                 )
             except Exception:
-                bt.logging.error(
+                logger.error(
                     f"[CORE] Failed to load Docker registry: {traceback.format_exc()}"
                 )
                 docker_info = {}
@@ -288,7 +287,7 @@ class ScoringApi(BaseScoringApi):
             if commit.score is None or commit.accepted is None:
                 raise ValueError("Scoring produced no final result")
         except Exception as exc:
-            bt.logging.error(f"[CORE] Scoring failed: {traceback.format_exc()}")
+            logger.error(f"[CORE] Scoring failed: {traceback.format_exc()}")
             self._fail_work_item(item, str(exc))
             return
 
@@ -301,7 +300,7 @@ class ScoringApi(BaseScoringApi):
                 penalty=commit.penalty or 0.0,
             )
         except Exception as exc:
-            bt.logging.error(
+            logger.error(
                 f"[CORE] Failed to publish result: {traceback.format_exc()}"
             )
             self._fail_work_item(item, str(exc))
@@ -311,7 +310,7 @@ class ScoringApi(BaseScoringApi):
                 f"/commits/{item.context.commit_id}", {"state": "DONE"}
             )
         except Exception:
-            bt.logging.error(
+            logger.error(
                 f"[CORE] Failed to finalize commit: {traceback.format_exc()}"
             )
 
@@ -319,7 +318,7 @@ class ScoringApi(BaseScoringApi):
         try:
             self.result_publisher.fail_result(item.context, error)
         except Exception:
-            bt.logging.error(
+            logger.error(
                 f"[CORE] Failed to publish error: {traceback.format_exc()}"
             )
         try:
@@ -327,7 +326,7 @@ class ScoringApi(BaseScoringApi):
                 f"/commits/{item.context.commit_id}", {"state": "FAILED"}
             )
         except Exception:
-            bt.logging.error(
+            logger.error(
                 f"[CORE] Failed to mark commit FAILED: {traceback.format_exc()}"
             )
 
@@ -347,11 +346,11 @@ class ScoringApi(BaseScoringApi):
                     if item is not None:
                         self._score_work_item(item, challenge_name)
                 except Exception:
-                    bt.logging.error(
+                    logger.error(
                         f"[CORE] Commit processing failed: {traceback.format_exc()}"
                     )
         except Exception:
-            bt.logging.error(f"[CORE] Forward failed: {traceback.format_exc()}")
+            logger.error(f"[CORE] Forward failed: {traceback.format_exc()}")
 
 
 if __name__ == "__main__":
@@ -362,7 +361,7 @@ if __name__ == "__main__":
         daemon=True,
     )
     server_thread.start()
-    with app:
-        while True:
-            bt.logging.info("ScoringApi is running...")
-            time.sleep(app.config.EPOCH_LENGTH // 4)
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        logger.info("Scoring API stopped.")

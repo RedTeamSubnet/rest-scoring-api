@@ -1,9 +1,11 @@
-import bittensor as bt
+import logging
 import requests
 from redteam_core.config.main import constants
 from redteam_core.validator.models import ComparisonLog
 
 from ..commit_context import ScoringCommit
+
+logger = logging.getLogger(__name__)
 
 
 class Comparison:
@@ -14,7 +16,7 @@ class Comparison:
 
     @staticmethod
     def reject_invalid_submission(miner_commit: ScoringCommit) -> None:
-        bt.logging.warning(
+        logger.warning(
             f"[CONTROLLER] Skipping comparison for miner "
             f"{miner_commit.miner_hotkey} due to invalid submission."
         )
@@ -44,7 +46,7 @@ class Comparison:
             _unique_commit_key = (
                 f"{reference_commit.miner_uid}_{reference_commit.commit_id[:10]}"
             )
-            bt.logging.info(
+            logger.info(
                 f"[CONTROLLER] Running comparison with reference commit {_unique_commit_key}"
             )
             if _unique_commit_key not in miner_commit.comparison_logs:
@@ -55,7 +57,7 @@ class Comparison:
                 or not miner_commit.scoring_logs
                 or miner_commit.scoring_logs[0].miner_output is None
             ):
-                bt.logging.warning(
+                logger.warning(
                     f"[CONTROLLER] Skipping comparison with {reference_commit.commit_id} because files or miner output are missing."
                 )
                 continue
@@ -78,7 +80,7 @@ class Comparison:
                 miner_commit.miner_hotkey == reference_commit.miner_hotkey
                 and _similarity_score < self.max_self_comparison_score
             ):
-                bt.logging.warning(
+                logger.warning(
                     f"[CONTROLLER] Skipping self-comparison for {miner_commit.miner_hotkey}\
                           with {reference_commit.miner_hotkey} due to low similarity score {_similarity_score}"
                 )
@@ -100,7 +102,7 @@ class Comparison:
             if _similarity_score > self.challenge_info["comparison_config"].get(
                 "min_acceptable_score", 0.6
             ):
-                bt.logging.warning(
+                logger.warning(
                     f"[CONTROLLER] Stopping comparison because of high similarity threshold is reached,\
                           similarity score {_similarity_score}"
                 )
@@ -110,7 +112,7 @@ class Comparison:
                 _unique_commit_key in miner_commit.comparison_logs
                 and not miner_commit.comparison_logs[_unique_commit_key]
             ):
-                bt.logging.info(
+                logger.info(
                     f"[CONTROLLER] Removing empty comparison logs for {_unique_commit_key} for miner."
                 )
                 del miner_commit.comparison_logs[_unique_commit_key]
@@ -157,7 +159,7 @@ class Comparison:
                 headers=headers,
             )
             if response.status_code == 404:
-                bt.logging.warning("No accepted submission to compare against.")
+                logger.warning("No accepted submission to compare against.")
                 data = {
                     "similarity_score": 0.0,
                     "reason": "No accepted submission to compare against.",
@@ -169,7 +171,7 @@ class Comparison:
                 raise ValueError("Comparison response data must be an object")
 
         except Exception as e:
-            bt.logging.error(f"Error in comparison request: {str(e)}")
+            logger.error(f"Error in comparison request: {str(e)}")
             data = {
                 "target": "Error while comparing outputs",
                 "similarity_score": 0.0,
@@ -181,7 +183,7 @@ class Comparison:
 
     def same_score_comparison(self, miner_commit: ScoringCommit) -> None:
         if not miner_commit.scoring_logs:
-            bt.logging.warning(
+            logger.warning(
                 f"[CONTROLLER] No scoring logs found for miner {miner_commit.miner_hotkey}, \
                     skipping same score comparison."
             )
@@ -198,7 +200,7 @@ class Comparison:
             if abs(ref_commit.score - _commit_score) <= 0.1:
                 reference_commits_in_range.append(ref_commit)
         if not reference_commits_in_range:
-            bt.logging.info(
+            logger.info(
                 f"[CONTROLLER] No reference commits found with score in range for miner {miner_commit.miner_hotkey}, \
                     skipping same score comparison."
             )
@@ -220,7 +222,7 @@ class Comparison:
                     and _comparison_logs["similarity_score"]
                     < self.max_self_comparison_score
                 ):
-                    bt.logging.info(
+                    logger.info(
                         f"[CONTROLLER] Skipping same-score self-comparison for miner "
                         f"UID {miner_commit.miner_hotkey}: similarity score "
                         f"{_comparison_logs['similarity_score']} is below "
@@ -292,7 +294,7 @@ class Comparison:
                 headers=headers,
             )
             if response.status_code == 404:
-                bt.logging.warning("No accepted submission to compare against.")
+                logger.warning("No accepted submission to compare against.")
                 return {
                     "similarity_score": 0.0,
                     "reason": "No accepted submission to compare against.",
@@ -304,7 +306,7 @@ class Comparison:
             return data
 
         except Exception as e:
-            bt.logging.error(f"Error in same-score comparison request: {str(e)}")
+            logger.error(f"Error in same-score comparison request: {str(e)}")
             return [
                 {
                     "target": "Error while comparing outputs",
@@ -365,11 +367,11 @@ class Comparison:
                     )
                 )
 
-            bt.logging.info(
+            logger.info(
                 f"Max comparison score for miner {miner_commit.miner_hotkey}: {max_score}"
             )
         except Exception as exc:
-            bt.logging.error(
+            logger.error(
                 f"[CONTROLLER] Error while checking comparison score: {exc}"
             )
         for target_commit_id, result in comparisons:
@@ -407,7 +409,7 @@ class Comparison:
             response_data = response.json()
             data = response_data.get("data", {})
             if not data:
-                bt.logging.warning(
+                logger.warning(
                     f"[CONTROLLER] No baseline comparison data returned for miner {miner_commit.miner_hotkey}."
                 )
                 return
@@ -436,5 +438,5 @@ class Comparison:
             return
 
         except Exception as e:
-            bt.logging.error(f"Error in baseline comparison request: {str(e)}")
+            logger.error(f"Error in baseline comparison request: {str(e)}")
             return

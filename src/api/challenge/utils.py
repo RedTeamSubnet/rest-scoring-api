@@ -1,6 +1,8 @@
-import bittensor as bt
+import logging
 import requests
 from redteam_core.config.main import constants
+
+logger = logging.getLogger(__name__)
 
 
 class ChallengeUtils:
@@ -61,5 +63,5 @@ class ChallengeUtils:
             response.raise_for_status()
             return response.json() if response.content else {}
         except Exception as exc:
-            bt.logging.error(f"[CONTROLLER] Unable to fetch {path}: {exc}")
+            logger.error(f"[CONTROLLER] Unable to fetch {path}: {exc}")
             return {}
