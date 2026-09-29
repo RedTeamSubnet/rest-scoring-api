@@ -799,15 +799,20 @@ def test_list_challenges_requests_expanded_config():
 def test_scoring_api_loads_active_challenge_configs_from_core(monkeypatch):
     scoring_module = importlib.import_module("src.api.__main__")
     monkeypatch.setenv("CHALLENGE_TOKEN", "loaded-secret")
+    monkeypatch.setenv("EMPTY_CHALLENGE_TOKEN", "")
 
     spec = {
         "scoring_headers": {
             "X-API-KEY": "Bearer ${CHALLENGE_TOKEN}",
             "literal": "$CHALLENGE_TOKEN",
             "missing": "${MISSING_CHALLENGE_TOKEN}",
+            "default": "${MISSING_CHALLENGE_TOKEN:-fallback}",
+            "empty": "${EMPTY_CHALLENGE_TOKEN:-empty-fallback}",
         },
         "nested": ["${CHALLENGE_TOKEN}", 1],
-        "challenge_container_run_kwargs": {"environment": {"TASKS": ["one", "two"]}},
+        "challenge_container_run_kwargs": {
+            "environment": {"TASKS": "- one\n- ${CHALLENGE_TOKEN}"}
+        },
     }
     api = scoring_module.ScoringApi.__new__(scoring_module.ScoringApi)
     api.core_api = Mock()
@@ -837,10 +842,12 @@ def test_scoring_api_loads_active_challenge_configs_from_core(monkeypatch):
         "X-API-KEY": "Bearer loaded-secret",
         "literal": "$CHALLENGE_TOKEN",
         "missing": "${MISSING_CHALLENGE_TOKEN}",
+        "default": "fallback",
+        "empty": "empty-fallback",
     }
     assert challenge["nested"] == ["loaded-secret", 1]
     assert challenge["challenge_container_run_kwargs"]["environment"]["TASKS"] == (
-        '["one","two"]'
+        '["one","loaded-secret"]'
     )
     assert spec["scoring_headers"]["X-API-KEY"] == "Bearer ${CHALLENGE_TOKEN}"
 
