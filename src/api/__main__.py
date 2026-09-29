@@ -1,14 +1,9 @@
 import base64
-import json
-import os
-import re
 import threading
 import time
 import traceback
-from copy import deepcopy
 
 import bittensor as bt
-import yaml
 from dotenv import load_dotenv
 
 from ._base import BaseScoringApi
@@ -22,43 +17,10 @@ from .commit_context import (
 from .result_publisher import ResultPublisher
 from .router import start_ping_server
 from .challenge.main import Controller
+from .utils.challenge_info import prepare_challenge_info
 from .utils.helpers import get_docker_hub_id
 
 load_dotenv(".env", override=True)
-
-
-_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-def _expand_environment_variables(value):
-    """Expand only ${NAME} placeholders, including in nested config values."""
-    if isinstance(value, dict):
-        return {key: _expand_environment_variables(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_expand_environment_variables(item) for item in value]
-    if isinstance(value, str) and "${" in value:
-        return _ENV_PLACEHOLDER_RE.sub(
-            lambda match: os.environ.get(match.group(1), match.group(0)), value
-        )
-    return value
-
-
-def _format_challenge_container_environment(challenge_info: dict) -> None:
-    """Normalize structured Docker environment values to JSON strings."""
-    run_kwargs = challenge_info.get("challenge_container_run_kwargs", {})
-    environment = run_kwargs.get("environment")
-    if not isinstance(environment, dict):
-        return
-
-    for key, value in environment.items():
-        structured_value = value
-        if isinstance(value, str):
-            try:
-                structured_value = yaml.safe_load(value)
-            except yaml.YAMLError:
-                pass
-        if isinstance(structured_value, (dict, list)):
-            environment[key] = json.dumps(structured_value, separators=(",", ":"))
 
 
 class ScoringApi(BaseScoringApi):
@@ -105,8 +67,7 @@ class ScoringApi(BaseScoringApi):
                 )
                 continue
 
-            challenge_info = _expand_environment_variables(deepcopy(spec))
-            _format_challenge_container_environment(challenge_info)
+            challenge_info = prepare_challenge_info(spec)
             challenge_info.setdefault("name", challenge_name)
             active_challenges[challenge_name] = challenge_info
             active_challenge_ids[challenge_id] = challenge_name
