@@ -184,6 +184,7 @@ class ResultPublisher:
             "mime_type": mime_type,
             "size_bytes": len(data),
             "checksum": hashlib.sha256(data).hexdigest(),
+            "uri_path": f"commits/{context.commit_id}/{name[:256]}",
             "data": content,
             "commit_id": context.commit_id,
         }
@@ -214,6 +215,7 @@ class ResultPublisher:
             "mime_type": "application/json",
             "size_bytes": len(data),
             "checksum": hashlib.sha256(data).hexdigest(),
+            "uri_path": f"commits/{context.commit_id}/{filename}",
             "data": content,
             "commit_id": context.commit_id,
         }
