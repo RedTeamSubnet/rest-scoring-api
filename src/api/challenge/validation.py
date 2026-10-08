@@ -73,6 +73,10 @@ class Validation:
                 "is_good" in check or "is_valid" in check
             ):
                 checks[check_name] = check
+        if not checks:
+            failed_at = data.get("failed_at", "UNKNOWN")
+            reason = data.get("reason", "No reason provided")
+            checks[failed_at] = {"is_valid": False, "reason": reason}
 
         return ValidationOutput(data=data, checks=checks)
 
