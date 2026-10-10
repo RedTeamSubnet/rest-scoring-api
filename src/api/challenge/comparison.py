@@ -413,6 +413,14 @@ class Comparison:
                     f"[CONTROLLER] No baseline comparison data returned for miner {miner_commit.miner_hotkey}."
                 )
                 return
+
+            _baseline_commit_id = self.result_publisher.get_or_create_baseline_commit(
+                self.context.challenge_id, self.context.miner_id
+            )
+
+            _all_baseline_results: list[dict] = []
+            _max_similarity = 0.0
+
             for _outputs in data:
 
                 _target_script = _outputs.get("target", "script_1")
@@ -428,11 +436,24 @@ class Comparison:
                     similarity_score=_similarity_score,
                     reason=_outputs.get("reason", "Unknown"),
                 )
-                if f"baseline_{_target_script}" not in miner_commit.comparison_logs:
-                    miner_commit.comparison_logs[f"baseline_{_target_script}"] = []
+                _key = f"baseline_{_target_script}"
+                if _key not in miner_commit.comparison_logs:
+                    miner_commit.comparison_logs[_key] = []
 
-                miner_commit.comparison_logs[f"baseline_{_target_script}"].append(
-                    comparison_log
+                miner_commit.comparison_logs[_key].append(comparison_log)
+
+                _all_baseline_results.append(_outputs)
+                _max_similarity = max(_max_similarity, _similarity_score)
+
+            if _all_baseline_results:
+                self._store_comparison(
+                    self.context,
+                    _baseline_commit_id,
+                    {
+                        "similarity_score": _max_similarity,
+                        "reason": "baseline comparison",
+                        "baseline_results": _all_baseline_results,
+                    },
                 )
 
             return

@@ -2,6 +2,7 @@ import time
 import traceback
 
 import logging
+from typing import Any
 from redteam_core.config.main import constants
 from redteam_core.validator.models import ComparisonLog, ScoringLog
 
@@ -122,6 +123,7 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
                 if not validation_output.is_valid:
                     Comparison.reject_invalid_submission(miner_commit)
                 else:
+                    self._set_commit_state("COMPARING")
                     max_comparison_score = self._check_comparison_score(miner_commit)
                     if max_comparison_score >= 0.6:
                         logger.info(
@@ -138,6 +140,8 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
                         }
                     else:
                         Comparison.start(self, miner_commit)
+                    self._update_result_with_comparisons(miner_commit)
+                    self._set_commit_state("SCORING")
                     Scoring.score_new_inputs(self, miner_commit)
                     Comparison.same_score_comparison(self, miner_commit)
                 FinalOutput.start(self, miner_commit)
@@ -242,6 +246,42 @@ class Controller(Comparison, Validation, Scoring, ChallengeUtils, FinalOutput):
 
     def _store_output(self, *args, **kwargs):
         return self.result_publisher.publish_output(*args, **kwargs)
+
+    def _set_commit_state(self, state: str) -> None:
+        """Transition the commit state in rest-core."""
+        try:
+            self.result_publisher.client.update(
+                f"/commits/{self.context.commit_id}", {"state": state}
+            )
+        except Exception:
+            logger.warning(
+                f"[CONTROLLER] Failed to set commit state to {state}: "
+                f"{traceback.format_exc()}"
+            )
+
+    def _update_result_with_comparisons(self, miner_commit: ScoringCommit) -> None:
+        """Update commit_result meta with comparison summary data."""
+        if not miner_commit.comparison_logs:
+            return
+        comparison_summary: dict[str, Any] = {}
+        for key, logs in miner_commit.comparison_logs.items():
+            comparison_summary[key] = [
+                {
+                    "similarity_score": log.similarity_score,
+                    "reason": getattr(log, "reason", None),
+                }
+                for log in logs
+                if log.similarity_score is not None
+            ]
+        try:
+            self.result_publisher.update_result_meta(
+                self.context, {"comparisons": comparison_summary}
+            )
+        except Exception:
+            logger.warning(
+                f"[CONTROLLER] Failed to update commit_result with comparison data: "
+                f"{traceback.format_exc()}"
+            )
 
 
 __all__ = ["Controller"]

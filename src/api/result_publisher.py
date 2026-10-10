@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import mimetypes
 from datetime import datetime, timezone
 from typing import Any
@@ -11,10 +12,74 @@ import requests
 from .commit_context import CommitContext
 from .core_api import CoreApiClient
 
+logger = logging.getLogger(__name__)
+
+_BASELINE_NOTE = "baseline-dummy"
+_BASELINE_CIPHER_PREFIX = "baseline-dummy-"
+
 
 class ResultPublisher:
     def __init__(self, client: CoreApiClient):
         self.client = client
+        self._baseline_commit_cache: dict[str, str] = {}
+
+    def get_or_create_baseline_commit(self, challenge_id: str, miner_id: str) -> str:
+        """Get or create a dummy baseline commit for baseline comparisons.
+
+        The CommitComparisonORM requires a target_commit_id FK to commit.id.
+        Baseline scripts have no real commit, so we create a dummy DONE commit
+        per challenge that can serve as the target.
+        """
+        cached = self._baseline_commit_cache.get(challenge_id)
+        if cached:
+            return cached
+
+        for commit in self.client.list_commits(
+            challenge_id=challenge_id, state="DONE"
+        ):
+            if commit.get("note") == _BASELINE_NOTE:
+                commit_id = commit.get("id")
+                if isinstance(commit_id, str):
+                    self._baseline_commit_cache[challenge_id] = commit_id
+                    return commit_id
+
+        cipher_commit = f"{_BASELINE_CIPHER_PREFIX}{challenge_id}"
+        if len(cipher_commit) < 16:
+            cipher_commit = cipher_commit.ljust(16, "0")
+        try:
+            result = self.client.create(
+                "/commits/",
+                {
+                    "cipher_commit": cipher_commit[:512],
+                    "committed_at": datetime.now(timezone.utc).isoformat(),
+                    "challenge_id": challenge_id,
+                    "miner_id": miner_id,
+                    "state": "DONE",
+                    "note": _BASELINE_NOTE,
+                },
+            )
+            baseline_id = result["id"]
+        except requests.HTTPError:
+            for commit in self.client.list_commits(
+                challenge_id=challenge_id, state="DONE"
+            ):
+                if commit.get("note") == _BASELINE_NOTE:
+                    baseline_id = commit.get("id")
+                    if isinstance(baseline_id, str):
+                        break
+            else:
+                raise
+        self._baseline_commit_cache[challenge_id] = baseline_id
+        return baseline_id
+
+    def update_result_meta(
+        self, context: CommitContext, meta: dict[str, Any]
+    ) -> None:
+        """Update commit_result meta with comparison/scoring data."""
+        self.client.update(
+            f"/commit-results/{context.commit_result_id}",
+            {"meta": meta},
+        )
 
     def create_result(self, commit_id: str, miner_id: str) -> str:
         result = self.client.create(

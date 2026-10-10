@@ -266,6 +266,15 @@ class ScoringApi(BaseScoringApi):
         challenge_info = self.active_challenges[challenge_name]
         commit = item.commit
         try:
+            self.core_api.update(
+                f"/commits/{item.context.commit_id}", {"state": "VALIDATING"}
+            )
+        except Exception:
+            logger.warning(
+                f"[CORE] Failed to set commit {item.context.commit_id} to VALIDATING: "
+                f"{traceback.format_exc()}"
+            )
+        try:
             references = self._accepted_core_commits(item.context.challenge_id)
             try:
                 docker_info = self._docker_info_for(
