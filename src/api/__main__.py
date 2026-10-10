@@ -1,9 +1,12 @@
 import base64
+import datetime
 import threading
 import traceback
 
 import logging
 from dotenv import load_dotenv
+
+from redteam_core.config import constants
 
 from ._base import BaseScoringApi
 from .core_api import CoreApiClient
@@ -300,9 +303,7 @@ class ScoringApi(BaseScoringApi):
                 penalty=commit.penalty or 0.0,
             )
         except Exception as exc:
-            logger.error(
-                f"[CORE] Failed to publish result: {traceback.format_exc()}"
-            )
+            logger.error(f"[CORE] Failed to publish result: {traceback.format_exc()}")
             self._fail_work_item(item, str(exc))
             return
         try:
@@ -310,17 +311,13 @@ class ScoringApi(BaseScoringApi):
                 f"/commits/{item.context.commit_id}", {"state": "DONE"}
             )
         except Exception:
-            logger.error(
-                f"[CORE] Failed to finalize commit: {traceback.format_exc()}"
-            )
+            logger.error(f"[CORE] Failed to finalize commit: {traceback.format_exc()}")
 
     def _fail_work_item(self, item: ScoringWorkItem, error: str) -> None:
         try:
             self.result_publisher.fail_result(item.context, error)
         except Exception:
-            logger.error(
-                f"[CORE] Failed to publish error: {traceback.format_exc()}"
-            )
+            logger.error(f"[CORE] Failed to publish error: {traceback.format_exc()}")
         try:
             self.core_api.update(
                 f"/commits/{item.context.commit_id}", {"state": "FAILED"}
@@ -330,14 +327,52 @@ class ScoringApi(BaseScoringApi):
                 f"[CORE] Failed to mark commit FAILED: {traceback.format_exc()}"
             )
 
+    def _transition_committed_to_queued(self) -> None:
+        """Transition COMMITTED commits to QUEUED after the cooldown period."""
+        cooldown = constants.COMMIT_COOLDOWN
+        now = datetime.datetime.now(datetime.timezone.utc)
+        queued_commits = []
+        for core_commit in self.core_api.list_commits(state="COMMITTED"):
+            commit_id = core_commit.get("id")
+            committed_at_str = core_commit.get("committed_at")
+            if not isinstance(commit_id, str) or not isinstance(committed_at_str, str):
+                continue
+            try:
+                committed_at = datetime.datetime.fromisoformat(
+                    str(committed_at_str).replace("Z", "+00:00")
+                )
+            except ValueError:
+                logger.warning(
+                    f"[CORE] Commit {commit_id} has unparseable committed_at: "
+                    f"{committed_at_str}"
+                )
+                continue
+            if committed_at.tzinfo is None:
+                committed_at = committed_at.replace(tzinfo=datetime.timezone.utc)
+            elapsed = (now - committed_at).total_seconds()
+            if elapsed < cooldown:
+                continue
+            try:
+                self.core_api.update(f"/commits/{commit_id}", {"state": "QUEUED"})
+                logger.info(
+                    f"[CORE] Commit {commit_id} transitioned COMMITTED -> QUEUED "
+                    f"(elapsed {int(elapsed)}s > cooldown {cooldown}s)"
+                )
+                queued_commits.append(core_commit)
+            except Exception:
+                logger.error(
+                    f"[CORE] Failed to transition commit {commit_id} to QUEUED: "
+                    f"{traceback.format_exc()}"
+                )
+
     def forward(self) -> None:
         """Score queued commits sequentially; rest-core result status tracks progress."""
         self._init_active_challenges()
+        queued_commits = self.core_api.list_commits(state="QUEUED")
+        self._transition_committed_to_queued()
         try:
             challenge_names = self._active_core_challenges()
-            for core_commit in self.core_api.list_commits(
-                state="QUEUED", expands=["commit_result"]
-            ):
+            for core_commit in queued_commits:
                 challenge_name = challenge_names.get(core_commit.get("challenge_id"))
                 if challenge_name is None:
                     continue
