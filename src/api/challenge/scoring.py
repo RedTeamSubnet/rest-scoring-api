@@ -197,9 +197,7 @@ class Scoring:
     def _get_telemetry_from_challenge(self, miner_output: dict) -> None:
         telemetry_path = self.challenge_info.get("telemetry_path", "/telemetry")
         if telemetry_path:
-            miner_output["telemetry"] = self._get_telemetry_from_challenge(
-                telemetry_path
-            )
+            miner_output["telemetry"] = self._get_challenge_data(telemetry_path, {})
         return
 
     def _get_results_from_challenge(self) -> dict:
