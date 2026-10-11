@@ -377,9 +377,9 @@ class ScoringApi(BaseScoringApi):
     def forward(self) -> None:
         """Score queued commits sequentially; rest-core result status tracks progress."""
         self._init_active_challenges()
-        queued_commits = self.core_api.list_commits(state="QUEUED")
         self._transition_committed_to_queued()
         try:
+            queued_commits = self.core_api.list_commits(state="QUEUED")
             challenge_names = self._active_core_challenges()
             for core_commit in queued_commits:
                 challenge_name = challenge_names.get(core_commit.get("challenge_id"))
