@@ -65,7 +65,7 @@ class Validation:
         miner_commit.scoring_logs[0].validation_output = data
         checks: dict[str, dict] = {}
         for check_name, check in data.items():
-            if check_name in {"is_valid", "reason"}:
+            if check_name in {"is_valid", "reason", "failed_at"}:
                 continue
             if isinstance(check, bool):
                 checks[check_name] = {"is_valid": check}
