@@ -14,46 +14,9 @@ class Scoring:
     """Generate inputs, run miners, and collect scoring outputs."""
 
     def start(self, miner_commit: ScoringCommit) -> None:
-        self._generate_scoring_logs(miner_commit)
-
-    def score_new_inputs(self, miner_commit: ScoringCommit) -> None:
-        self._score_miner_with_new_inputs(miner_commit)
-
-    def _generate_scoring_logs(self, miner_commit: ScoringCommit):
-        """Run and score miner with new challenge inputs."""
         miner_output, error_message = self._submit_challenge_to_miner()
-
-        if miner_output is None or error_message:
-            logger.warning(
-                f"[CONTROLLER - ABSController] Miner {miner_commit.miner_hotkey} \
-                    failed to produce output for reference comparison: {error_message}"
-            )
-            miner_commit.scoring_logs.insert(
-                0,
-                ScoringLog(
-                    miner_output=None,
-                    error=(
-                        f"[Not Accepted] {error_message}"
-                        if error_message
-                        else "[Not Accepted] No output from miner"
-                    ),
-                ),
-            )
-            return
-        commit_files = miner_output.get("commit_files")
-        if not isinstance(commit_files, list):
-            raise ValueError("Miner output must contain a commit_files list")
-        for index, commit_file in enumerate(commit_files):
-            if not isinstance(commit_file, dict):
-                raise ValueError(f"Commit file {index} must be an object")
-            self._store_file(self.context, commit_file, index)
-        miner_commit.scoring_logs.insert(
-            0,
-            ScoringLog(
-                miner_output=miner_output,
-                error=error_message,
-            ),
-        )
+        self._generate_scoring_logs(miner_commit, miner_output, error_message)
+        self._store_commit_files(miner_output)
 
     def _submit_challenge_to_miner(self) -> tuple[dict, str]:
         """
@@ -91,6 +54,79 @@ class Scoring:
             error_message = f"Submit challenge to miner failed: {str(ex)}"
             logger.error(error_message)
             return None, error_message
+
+    def _generate_scoring_logs(
+        self, miner_commit: ScoringCommit, miner_output: dict, error_message: str
+    ) -> None:
+        """Run and score miner with new challenge inputs."""
+
+        if miner_output is None or error_message:
+            logger.warning(
+                f"[CONTROLLER - ABSController] Miner {miner_commit.miner_hotkey} \
+                    failed to produce output for reference comparison: {error_message}"
+            )
+            miner_commit.scoring_logs.insert(
+                0,
+                ScoringLog(
+                    miner_output=None,
+                    error=(
+                        f"[Not Accepted] {error_message}"
+                        if error_message
+                        else "[Not Accepted] No output from miner"
+                    ),
+                ),
+            )
+            return
+        miner_commit.scoring_logs.insert(
+            0,
+            ScoringLog(
+                miner_output=miner_output,
+                error=error_message,
+            ),
+        )
+
+    def _store_commit_files(self, miner_output: dict) -> None:
+        commit_files = miner_output.get("commit_files")
+        if not isinstance(commit_files, list):
+            raise ValueError("Miner output must contain a commit_files list")
+        for index, commit_file in enumerate(commit_files):
+            if not isinstance(commit_file, dict):
+                raise ValueError(f"Commit file {index} must be an object")
+            self._store_file(self.context, commit_file, index)
+
+    def score_new_inputs(self, miner_commit: ScoringCommit) -> None:
+        miner_output = self._score_miner_with_new_inputs(miner_commit)
+
+        if miner_output is not None:
+            self._get_scoring_results_(miner_output)
+            self._get_telemetry_from_challenge(miner_output)
+
+    def _score_miner_with_new_inputs(self, miner_commit: ScoringCommit) -> dict:
+        """Apply shared similarity gate, then score through the challenge container."""
+        scoring_log = miner_commit.scoring_logs[0]
+        miner_output = scoring_log.miner_output
+        highest_comparison_score = miner_commit.get_higest_comparison_score()
+        if (
+            highest_comparison_score >= self.comparison_min_acceptable_score
+            or highest_comparison_score == 0.0
+        ):
+            logger.info(
+                f"[CONTROLLER] Skipping scoring for miner {miner_commit.miner_hotkey} "
+                f"due to comparison score: {highest_comparison_score}"
+            )
+            scoring_log.score = 0.0
+            message = "Skipped scoring due to high comparison score."
+            scoring_log.error = (
+                f"{scoring_log.error} | {message}" if scoring_log.error else message
+            )
+            return miner_output
+
+        scoring_log.score = (
+            self._score_challenge(miner_output=miner_output)
+            if miner_output is not None
+            else 0.0
+        )
+        return miner_output
 
     def _get_challenge_from_container(self) -> dict:
         """
@@ -154,54 +190,20 @@ class Scoring:
             score = 0.0
         return score
 
-    def _score_miner_with_new_inputs(self, miner_commit: ScoringCommit) -> None:
-        """Apply shared similarity gate, then score through the challenge container."""
-        scoring_log = miner_commit.scoring_logs[0]
-        highest_comparison_score = miner_commit.get_higest_comparison_score()
-        if (
-            highest_comparison_score >= self.comparison_min_acceptable_score
-            or highest_comparison_score == 0.0
-        ):
-            logger.info(
-                f"[CONTROLLER] Skipping scoring for miner {miner_commit.miner_hotkey} "
-                f"due to comparison score: {highest_comparison_score}"
-            )
-            scoring_log.score = 0.0
-            message = "Skipped scoring due to high comparison score."
-            scoring_log.error = (
-                f"{scoring_log.error} | {message}" if scoring_log.error else message
-            )
-            return
+    def _get_scoring_results_(self, miner_output: dict) -> None:
+        miner_output["scoring_results"] = self._get_results_from_challenge()
+        self._store_output(self.context, miner_output["scoring_results"])
 
-        miner_output = scoring_log.miner_output
-        scoring_log.score = (
-            self._score_challenge(miner_output=miner_output)
-            if miner_output is not None
-            else 0.0
-        )
-        if miner_output is not None:
-            miner_output["scoring_results"] = self._get_results_from_challenge()
-            self._store_output(self.context, miner_output["scoring_results"])
-            telemetry_path = self.challenge_info.get(
-                "telemetry_path",
-                (
-                    "/telemetry"
-                    if self.challenge_info.get("challenge_type") == "ada"
-                    else None
-                ),
+    def _get_telemetry_from_challenge(self, miner_output: dict) -> None:
+        telemetry_path = self.challenge_info.get("telemetry_path", "/telemetry")
+        if telemetry_path:
+            miner_output["telemetry"] = self._get_telemetry_from_challenge(
+                telemetry_path
             )
-            if telemetry_path:
-                miner_output["telemetry"] = self._get_telemetry_from_challenge(
-                    telemetry_path
-                )
+        return
 
     def _get_results_from_challenge(self) -> dict:
-        default_path = (
-            "/results"
-            if self.challenge_info.get("challenge_type") == "ada"
-            else "/result"
-        )
-        path = self.challenge_info.get("results_path", default_path)
+        path = self.challenge_info.get("results_path", "/results")
         api_key = os.environ.get("RT_CHALLENGE_API_KEY")
         headers = {"X-API-Key": api_key} if api_key else {}
         return self._get_challenge_data(path, headers=headers)
