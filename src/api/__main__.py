@@ -929,7 +929,8 @@ class ScoringApi(BaseScoringApi):
                     commit = MinerChallengeCommit.model_validate(
                         commit_data["commits"][0]
                     )
-                    _accepted_commits.append(commit)
+                    if commit.penalty < 0.6:
+                        _accepted_commits.append(commit)
                 except Exception:
                     bt.logging.error(
                         f"Failed to validate accepted challenge commit: {traceback.format_exc()}"
